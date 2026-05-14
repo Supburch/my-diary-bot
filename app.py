@@ -681,3 +681,174 @@ async def handle_event(event: MessageEvent) -> None:
 
         except Exception:
             logger.exception("handle_event failed")
+
+# alembic/env.py
+"""
+Alembic async migration environment
+รองรับ asyncpg (PostgreSQL async driver)
+"""
+
+import asyncio
+import os
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import create_async_engine
+
+# import Base จาก app เพื่อให้ Alembic รู้จัก models
+from app import Base
+
+# ── Alembic Config ──────────────────────────────────────
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# ── Target metadata ─────────────────────────────────────
+target_metadata = Base.metadata
+
+
+def get_database_url() -> str:
+    """
+    อ่าน DATABASE_URL จาก environment
+    รองรับทั้ง asyncpg และ psycopg2 format
+    """
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise RuntimeError("DATABASE_URL environment variable is not set")
+
+    # Alembic ต้องการ async driver (asyncpg)
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+
+    return url
+
+
+# ── Offline migrations (generate SQL script) ────────────
+def run_migrations_offline() -> None:
+    """
+    สร้าง SQL script โดยไม่ต้อง connect DB จริง
+    ใช้: alembic upgrade head --sql > migration.sql
+    """
+    url = get_database_url()
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+# ── Online migrations (run against live DB) ─────────────
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    url    = get_database_url()
+    engine = create_async_engine(url, poolclass=pool.NullPool)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(do_run_migrations)
+
+    await engine.dispose()
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
+
+
+# ── Entry point ──────────────────────────────────────────
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+"""initial schema
+
+Revision ID: 001
+Revises:
+Create Date: 2026-05-14
+"""
+
+from __future__ import annotations
+
+from alembic import op
+import sqlalchemy as sa
+
+# ── revision identifiers ─────────────────────────────────
+revision:    str       = "001"
+down_revision: str | None = None
+branch_labels: str | None = None
+depends_on:    str | None = None
+
+
+def upgrade() -> None:
+    # ── diary_users ──────────────────────────────────────
+    op.create_table(
+        "diary_users",
+        sa.Column("user_id", sa.String(255), primary_key=True, nullable=False),
+        sa.Column("active",  sa.Boolean(),   nullable=False, server_default=sa.true()),
+    )
+
+    # ── diary_entries ────────────────────────────────────
+    op.create_table(
+        "diary_entries",
+        sa.Column("id",         sa.Integer(),                  primary_key=True, autoincrement=True),
+        sa.Column("user_id",    sa.String(255),                nullable=False),
+        sa.Column("entry_date", sa.Date(),                     nullable=False),
+        sa.Column("code",       sa.String(32),                 nullable=False),
+        sa.Column("category",   sa.String(255),                nullable=False),
+        sa.Column("symbol",     sa.String(8),                  nullable=False),
+        sa.Column("done",       sa.Boolean(),                  nullable=False, server_default=sa.true()),
+        sa.Column("count",      sa.Integer(),                  nullable=True),
+        sa.Column("note",       sa.Text(),                     nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True),    nullable=False),
+
+        # unique constraint: 1 user + 1 date + 1 code = 1 row
+        sa.UniqueConstraint("user_id", "entry_date", "code", name="uq_user_date_code"),
+    )
+
+    # ── indexes ──────────────────────────────────────────
+    op.create_index("ix_diary_entries_user_id",    "diary_entries", ["user_id"])
+    op.create_index("ix_diary_entries_entry_date", "diary_entries", ["entry_date"])
+
+    # composite index: query by user + date (get_today_entries)
+    op.create_index(
+        "ix_diary_entries_user_date",
+        "diary_entries",
+        ["user_id", "entry_date"],
+    )
+
+    # partial index: เร่ง habit queries ไม่รวม free notes (~~)
+    op.execute(
+        """
+        CREATE INDEX ix_diary_entries_habits
+        ON diary_entries (user_id, entry_date, code)
+        WHERE code NOT LIKE '~~%'
+        """
+    )
+
+
+def downgrade() -> None:
+    op.execute("DROP INDEX IF EXISTS ix_diary_entries_habits")
+    op.drop_index("ix_diary_entries_user_date",  table_name="diary_entries")
+    op.drop_index("ix_diary_entries_entry_date", table_name="diary_entries")
+    op.drop_index("ix_diary_entries_user_id",    table_name="diary_entries")
+    op.drop_table("diary_entries")
+    op.drop_table("diary_users")
