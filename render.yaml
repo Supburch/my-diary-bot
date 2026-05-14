@@ -1,0 +1,28 @@
+# render.yaml
+# IMPORTANT: workers=1 — APScheduler in-process
+# หลาย workers = reminder job ยิงซ้ำ
+
+services:
+  - type: web
+    name: diarybot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    # migrate ก่อน start เสมอ
+    startCommand: alembic upgrade head && gunicorn app:app -k uvicorn.workers.UvicornWorker -w 1 --timeout 120
+    envVars:
+      - key: DATABASE_URL
+        sync: false   # postgresql+asyncpg://user:pass@host/db
+      - key: REDIS_URL
+        sync: false   # redis://...
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: REMINDER_HOUR
+        value: "22"
+      - key: WEBHOOK_CONCURRENCY
+        value: "20"
+      - key: POOL_SIZE
+        value: "5"
+      - key: MAX_OVERFLOW
+        value: "5"
