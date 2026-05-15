@@ -12,4 +12,4 @@ COPY . .
 EXPOSE 8000
 
 # run migrations แล้วค่อย start server
-CMD ["sh", "-c", "alembic upgrade head && gunicorn app:app -k uvicorn.workers.UvicornWorker -w 1 --timeout 120 --bind 0.0.0.0:8000"]
+CMD ["gunicorn", "app:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "1", "--timeout", "120", "--bind", "0.0.0.0:8000"]
