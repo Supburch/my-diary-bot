@@ -1,19 +1,19 @@
+from __future__ import annotations
+
 """
 DiaryBot v3
 Production-ready LINE diary bot
 
 Stack:
-- FastAPI
-- PostgreSQL + SQLAlchemy Async
-- Redis
-- APScheduler
-- Alembic migrations
-- LINE Messaging API v3
+- FastAPI + BackgroundTasks
+- PostgreSQL + SQLAlchemy Async + Alembic
+- Redis (dedup, rate-limit, distributed lock)
+- APScheduler (daily reminder)
+- LINE Messaging API v3 (async)
 
-Changes from v2:
-- Removed Base.metadata.create_all → use Alembic
-- Added symbol to toggle_habit response
-- Pool size tuned for Render free tier (512MB RAM)
+Fixes vs previous version:
+  - asyncio.create_task → BackgroundTasks (safe ทุก context)
+  - second.isdigit() → re.fullmatch(r"[0-9]+") (กัน fullwidth digit)
 
 Run:
     alembic upgrade head
@@ -25,8 +25,6 @@ ENV:
     LINE_CHANNEL_ACCESS_TOKEN=...
     LINE_CHANNEL_SECRET=...
 """
-
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -85,14 +83,14 @@ class Settings(BaseSettings):
     line_channel_access_token: str
     line_channel_secret:       str
 
-    wake_word:              str = "บอต"
-    reminder_hour:          int = 22
-    webhook_concurrency:    int = 20   # tuned for Render free (512MB)
-    pool_size:              int = 5    # tuned for Render free
-    max_overflow:           int = 5
-    rate_limit_count:       int = 20
-    rate_limit_window_sec:  int = 5
-    redis_lock_ttl_sec:     int = 10
+    wake_word:             str = "บอต"
+    reminder_hour:         int = 22
+    webhook_concurrency:   int = 20
+    pool_size:             int = 5
+    max_overflow:          int = 5
+    rate_limit_count:      int = 20
+    rate_limit_window_sec: int = 5
+    redis_lock_ttl_sec:    int = 10
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -113,11 +111,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
-# =========================================================
-# Logging
-# =========================================================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -151,6 +144,7 @@ HELP_CMDS    = {"รหัส", "help", "code", "?"}
 
 # =========================================================
 # Database Models
+# (schema managed by Alembic — ไม่ create_all ที่นี่)
 # =========================================================
 
 class Base(DeclarativeBase):
@@ -172,19 +166,18 @@ class DiaryEntry(Base):
     entry_date: Mapped[date]          = mapped_column(Date, index=True)
     code:       Mapped[str]           = mapped_column(String(32))
     category:   Mapped[str]           = mapped_column(String(255))
-    symbol:     Mapped[str]           = mapped_column(String(8))
     done:       Mapped[bool]          = mapped_column(Boolean, default=True)
     count:      Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     note:       Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[datetime]      = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime]      = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "entry_date", "code", name="uq_user_date_code"),
     )
 
-
-# NOTE: ไม่มี Base.metadata.create_all ที่นี่
-# schema จัดการด้วย Alembic เท่านั้น (ดู alembic/)
 
 engine = create_async_engine(
     settings.database_url,
@@ -204,10 +197,7 @@ AsyncSessionLocal = async_sessionmaker(
 # Redis
 # =========================================================
 
-redis_client = redis.from_url(
-    settings.redis_url,
-    decode_responses=True,
-)
+redis_client = redis.from_url(settings.redis_url, decode_responses=True)
 
 
 async def is_duplicate_event(body: bytes) -> bool:
@@ -225,7 +215,10 @@ async def is_rate_limited(user_id: str) -> bool:
 
 
 @asynccontextmanager
-async def user_lock(user_id: str, ttl: int = settings.redis_lock_ttl_sec) -> AsyncIterator[bool]:
+async def user_lock(
+    user_id: str,
+    ttl: int = settings.redis_lock_ttl_sec,
+) -> AsyncIterator[bool]:
     """Token-safe distributed lock — กัน lock ถูก release โดย request อื่น"""
     key   = f"lock:user:{user_id}"
     token = uuid.uuid4().hex
@@ -241,23 +234,23 @@ async def user_lock(user_id: str, ttl: int = settings.redis_lock_ttl_sec) -> Asy
 
 
 # =========================================================
-# LINE SDK (reusable client)
+# LINE SDK (reusable client — สร้างครั้งเดียวใน lifespan)
 # =========================================================
 
 line_config = Configuration(access_token=settings.line_channel_access_token)
 line_parser = WebhookParser(settings.line_channel_secret)
 
-line_api_client:    Optional[AsyncApiClient]   = None
+line_api_client:    Optional[AsyncApiClient]    = None
 line_messaging_api: Optional[AsyncMessagingApi] = None
 
 
-async def reply_message(reply_token: str, text: str) -> bool:
+async def reply_message(reply_token: str, message: str) -> bool:
     try:
         assert line_messaging_api is not None
         await line_messaging_api.reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token,
-                messages=[TextMessage(text=text[:2000])],
+                messages=[TextMessage(text=message[:2000])],
             )
         )
         return True
@@ -266,13 +259,13 @@ async def reply_message(reply_token: str, text: str) -> bool:
         return False
 
 
-async def push_message(user_id: str, text: str) -> bool:
+async def push_message(user_id: str, message: str) -> bool:
     try:
         assert line_messaging_api is not None
         await line_messaging_api.push_message(
             PushMessageRequest(
                 to=user_id,
-                messages=[TextMessage(text=text[:2000])],
+                messages=[TextMessage(text=message[:2000])],
             )
         )
         return True
@@ -288,14 +281,11 @@ async def push_message(user_id: str, text: str) -> bool:
 def now_bkk() -> datetime:
     return datetime.now(BANGKOK)
 
-def today_bkk() -> date:
-    return now_bkk().date()
-
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-def get_symbol(d: date) -> str:
-    return "●" if d.day % 2 == 0 else "■"
+def get_symbol(target_date: date) -> str:
+    return "●" if target_date.day % 2 == 0 else "■"
 
 
 async def safe_commit(db: AsyncSession) -> None:
@@ -345,7 +335,8 @@ def parse_message(text: str) -> dict:
 
     if len(parts) >= 2:
         second = parts[1]
-        if re.fullmatch(r"[0-9]+", second):   # ASCII digits only
+        # FIX: re.fullmatch กัน fullwidth digit "３", superscript "²"
+        if re.fullmatch(r"[0-9]+", second):
             count = int(second)
             if count <= 0:
                 return {"type": EntryType.INVALID, "error": "จำนวนต้องมากกว่า 0"}
@@ -363,16 +354,18 @@ def parse_message(text: str) -> dict:
 # Summary & Help
 # =========================================================
 
-def build_summary(entries: list[DiaryEntry]) -> str:
-    today   = today_bkk()
-    symbol  = get_symbol(today)
+def build_summary(entries: list[DiaryEntry], target_date: date) -> str:
+    symbol  = get_symbol(target_date)
     outline = "○" if symbol == "●" else "□"
 
     habit_map  = {e.code: e for e in entries if not e.code.startswith("~~")}
     free_notes = [e.note for e in entries if e.code.startswith("~~") and e.note]
 
     done_count = 0
-    lines = [f"📅 {today.strftime('%d %b %Y')}  ({symbol} = วันนี้)", "─" * 24]
+    lines = [
+        f"📅 {target_date.strftime('%d %b %Y')} ({symbol} = วันนี้)",
+        "─" * 24,
+    ]
 
     for code, category in COMMAND_MAP.items():
         entry   = habit_map.get(code)
@@ -408,9 +401,9 @@ def build_help() -> str:
         "55          → mark done ✅",
         "55 3        → with count",
         "55 วิ่งสวน  → with note",
-        "55 (ซ้ำ)   → undo ↩️",
-        "~ข้อความ    → free note",
-        "สรุป        → today summary",
+        "55 (ซ้ำ)    → undo ↩️",
+        "~ข้อความ     → free note",
+        "สรุป         → today summary",
     ]
     return "\n".join(lines)
 
@@ -429,11 +422,15 @@ async def register_user(db: AsyncSession, user_id: str) -> None:
         await db.rollback()
 
 
-async def get_today_entries(db: AsyncSession, user_id: str) -> list[DiaryEntry]:
+async def get_today_entries(
+    db: AsyncSession,
+    user_id: str,
+    today: date,
+) -> list[DiaryEntry]:
     result = await db.execute(
         select(DiaryEntry)
         .where(DiaryEntry.user_id == user_id)
-        .where(DiaryEntry.entry_date == today_bkk())
+        .where(DiaryEntry.entry_date == today)
         .order_by(DiaryEntry.code)
     )
     return list(result.scalars().all())
@@ -443,26 +440,34 @@ async def get_today_entries(db: AsyncSession, user_id: str) -> list[DiaryEntry]:
 # Business Logic
 # =========================================================
 
-async def save_free_note(db: AsyncSession, user_id: str, text: str) -> str:
+async def save_free_note(
+    db: AsyncSession,
+    user_id: str,
+    text: str,
+    today: date,
+) -> str:
     note = text.lstrip("~").strip()
     if re.match(r"^note(\s|$)", note, re.IGNORECASE):
         note = note[4:].strip()
     if not note:
         return "❌ ไม่มีข้อความ"
 
-    today = today_bkk()
     db.add(DiaryEntry(
         user_id=user_id, entry_date=today,
         code=f"~~{uuid.uuid4().hex[:8]}",
-        category="Free Note", symbol=get_symbol(today),
-        done=True, note=note, updated_at=now_utc(),
+        category="Free Note", done=True,
+        note=note, updated_at=now_utc(),
     ))
     await safe_commit(db)
     return f"📝 {note}"
 
 
-async def toggle_habit(db: AsyncSession, user_id: str, parsed: dict) -> str:
-    today  = today_bkk()
+async def toggle_habit(
+    db: AsyncSession,
+    user_id: str,
+    parsed: dict,
+    today: date,
+) -> str:
     symbol = get_symbol(today)
 
     result   = await db.execute(
@@ -496,8 +501,7 @@ async def toggle_habit(db: AsyncSession, user_id: str, parsed: dict) -> str:
     db.add(DiaryEntry(
         user_id=user_id, entry_date=today,
         code=parsed["code"], category=parsed["category"],
-        symbol=symbol, done=True,
-        count=parsed["count"], note=parsed["note"],
+        done=True, count=parsed["count"], note=parsed["note"],
         updated_at=now_utc(),
     ))
     try:
@@ -517,17 +521,19 @@ async def toggle_habit(db: AsyncSession, user_id: str, parsed: dict) -> str:
 async def process_message(db: AsyncSession, user_id: str, text: str) -> str:
     await register_user(db, user_id)
 
+    today    = now_bkk().date()
     stripped = text.strip()
     lower    = stripped.lower()
 
     if lower in SUMMARY_CMDS:
-        return build_summary(await get_today_entries(db, user_id))
+        entries = await get_today_entries(db, user_id, today)
+        return build_summary(entries, today)
 
     if lower in HELP_CMDS:
         return build_help()
 
     if stripped.startswith("~") or re.match(r"^note(\s|$)", lower):
-        return await save_free_note(db, user_id, stripped)
+        return await save_free_note(db, user_id, stripped, today)
 
     parsed = parse_message(stripped)
 
@@ -540,7 +546,7 @@ async def process_message(db: AsyncSession, user_id: str, text: str) -> str:
     async with user_lock(user_id) as locked:
         if not locked:
             return "⏳ กรุณารอสักครู่"
-        return await toggle_habit(db, user_id, parsed)
+        return await toggle_habit(db, user_id, parsed, today)
 
 
 # =========================================================
@@ -552,13 +558,15 @@ scheduler = AsyncIOScheduler(timezone="Asia/Bangkok")
 
 async def reminder_job() -> None:
     logger.info("reminder_job started")
+    today = now_bkk().date()
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(DiaryUser).where(DiaryUser.active.is_(True)))
         users  = list(result.scalars().all())
 
         for user in users:
             try:
-                entries    = await get_today_entries(db, user.user_id)
+                entries    = await get_today_entries(db, user.user_id, today)
                 done_count = sum(1 for e in entries if e.done and not e.code.startswith("~~"))
 
                 if done_count == 0:
@@ -579,19 +587,23 @@ async def lifespan(_: FastAPI):
 
     logger.info("starting diarybot v3")
 
-    # Schema managed by Alembic — ไม่ create_all ที่นี่
+    # Schema managed by Alembic
+    # รัน `alembic upgrade head` ก่อน start server เสมอ
+
     line_api_client    = AsyncApiClient(line_config)
     line_messaging_api = AsyncMessagingApi(line_api_client)
 
     # IMPORTANT: -w 1 เสมอ — APScheduler in-process
+    # หลาย workers = reminder job ยิงซ้ำ
     scheduler.add_job(
         reminder_job, "cron",
         hour=settings.reminder_hour, minute=0,
-        replace_existing=True,
+        replace_existing=True, id="daily_reminder",
     )
-    scheduler.start()
-    logger.info("diarybot v3 started")
+    if not scheduler.running:
+        scheduler.start()
 
+    logger.info("diarybot v3 started")
     yield
 
     logger.info("shutdown started")
@@ -628,14 +640,22 @@ async def health():
         async with AsyncSessionLocal() as db:
             await db.execute(text("SELECT 1"))
         await redis_client.ping()
-        return {"status": "ok", "db": "ok", "redis": "ok", "scheduler": scheduler.running}
+        return {
+            "status":    "ok",
+            "db":        "ok",
+            "redis":     "ok",
+            "scheduler": scheduler.running,
+        }
     except Exception:
         logger.exception("health failed")
         raise HTTPException(status_code=500, detail="unhealthy")
 
 
 @app.post("/callback")
-async def callback(request: Request, background_tasks: BackgroundTasks):
+async def callback(
+    request: Request,
+    background_tasks: BackgroundTasks,  # FIX: BackgroundTasks แทน create_task
+):
     signature = request.headers.get("X-Line-Signature", "")
     body      = await request.body()
 
@@ -643,7 +663,10 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
         return {"status": "duplicate"}
 
     try:
-        events = line_parser.parse(body.decode("utf-8", errors="replace"), signature)
+        events = line_parser.parse(
+            body.decode("utf-8", errors="replace"),
+            signature,
+        )
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="invalid signature")
     except Exception:
@@ -652,7 +675,7 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
 
     for event in events:
         if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
-            background_tasks.add_task(handle_event, event)
+            background_tasks.add_task(handle_event, event)  # FIX: safe ทุก context
 
     return {"status": "ok"}
 
@@ -660,8 +683,11 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
 async def handle_event(event: MessageEvent) -> None:
     async with webhook_semaphore:
         try:
-            user_id = event.source.user_id
-            text    = event.message.text.strip()
+            user_id = getattr(event.source, "user_id", None)
+            if not user_id:
+                return
+
+            text = event.message.text.strip()
 
             if event.source.type in ["group", "room"]:
                 if not text.startswith(settings.wake_word):
@@ -681,174 +707,3 @@ async def handle_event(event: MessageEvent) -> None:
 
         except Exception:
             logger.exception("handle_event failed")
-
-# alembic/env.py
-"""
-Alembic async migration environment
-รองรับ asyncpg (PostgreSQL async driver)
-"""
-
-import asyncio
-import os
-from logging.config import fileConfig
-
-from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import create_async_engine
-
-# import Base จาก app เพื่อให้ Alembic รู้จัก models
-from app import Base
-
-# ── Alembic Config ──────────────────────────────────────
-config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# ── Target metadata ─────────────────────────────────────
-target_metadata = Base.metadata
-
-
-def get_database_url() -> str:
-    """
-    อ่าน DATABASE_URL จาก environment
-    รองรับทั้ง asyncpg และ psycopg2 format
-    """
-    url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        raise RuntimeError("DATABASE_URL environment variable is not set")
-
-    # Alembic ต้องการ async driver (asyncpg)
-    if url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-
-    return url
-
-
-# ── Offline migrations (generate SQL script) ────────────
-def run_migrations_offline() -> None:
-    """
-    สร้าง SQL script โดยไม่ต้อง connect DB จริง
-    ใช้: alembic upgrade head --sql > migration.sql
-    """
-    url = get_database_url()
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-        compare_type=True,
-        compare_server_default=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-# ── Online migrations (run against live DB) ─────────────
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-        compare_server_default=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    url    = get_database_url()
-    engine = create_async_engine(url, poolclass=pool.NullPool)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(do_run_migrations)
-
-    await engine.dispose()
-
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
-
-
-# ── Entry point ──────────────────────────────────────────
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
-
-"""initial schema
-
-Revision ID: 001
-Revises:
-Create Date: 2026-05-14
-"""
-
-from __future__ import annotations
-
-from alembic import op
-import sqlalchemy as sa
-
-# ── revision identifiers ─────────────────────────────────
-revision:    str       = "001"
-down_revision: str | None = None
-branch_labels: str | None = None
-depends_on:    str | None = None
-
-
-def upgrade() -> None:
-    # ── diary_users ──────────────────────────────────────
-    op.create_table(
-        "diary_users",
-        sa.Column("user_id", sa.String(255), primary_key=True, nullable=False),
-        sa.Column("active",  sa.Boolean(),   nullable=False, server_default=sa.true()),
-    )
-
-    # ── diary_entries ────────────────────────────────────
-    op.create_table(
-        "diary_entries",
-        sa.Column("id",         sa.Integer(),                  primary_key=True, autoincrement=True),
-        sa.Column("user_id",    sa.String(255),                nullable=False),
-        sa.Column("entry_date", sa.Date(),                     nullable=False),
-        sa.Column("code",       sa.String(32),                 nullable=False),
-        sa.Column("category",   sa.String(255),                nullable=False),
-        sa.Column("symbol",     sa.String(8),                  nullable=False),
-        sa.Column("done",       sa.Boolean(),                  nullable=False, server_default=sa.true()),
-        sa.Column("count",      sa.Integer(),                  nullable=True),
-        sa.Column("note",       sa.Text(),                     nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True),    nullable=False),
-
-        # unique constraint: 1 user + 1 date + 1 code = 1 row
-        sa.UniqueConstraint("user_id", "entry_date", "code", name="uq_user_date_code"),
-    )
-
-    # ── indexes ──────────────────────────────────────────
-    op.create_index("ix_diary_entries_user_id",    "diary_entries", ["user_id"])
-    op.create_index("ix_diary_entries_entry_date", "diary_entries", ["entry_date"])
-
-    # composite index: query by user + date (get_today_entries)
-    op.create_index(
-        "ix_diary_entries_user_date",
-        "diary_entries",
-        ["user_id", "entry_date"],
-    )
-
-    # partial index: เร่ง habit queries ไม่รวม free notes (~~)
-    op.execute(
-        """
-        CREATE INDEX ix_diary_entries_habits
-        ON diary_entries (user_id, entry_date, code)
-        WHERE code NOT LIKE '~~%'
-        """
-    )
-
-
-def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_diary_entries_habits")
-    op.drop_index("ix_diary_entries_user_date",  table_name="diary_entries")
-    op.drop_index("ix_diary_entries_entry_date", table_name="diary_entries")
-    op.drop_index("ix_diary_entries_user_id",    table_name="diary_entries")
-    op.drop_table("diary_entries")
-    op.drop_table("diary_users")
