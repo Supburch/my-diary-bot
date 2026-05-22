@@ -1,70 +1,28 @@
 from __future__ import annotations
 
-"""
-DiaryBot v3
-Production-ready LINE diary bot
-
-Stack:
-- FastAPI + BackgroundTasks
-- PostgreSQL + SQLAlchemy Async + Alembic
-- Redis (dedup, rate-limit, distributed lock)
-- APScheduler (daily reminder)
-- LINE Messaging API v3 (async)
-
-Fixes vs previous version:
-  - asyncio.create_task → BackgroundTasks (safe ทุก context)
-  - second.isdigit() → re.fullmatch(r"[0-9]+") (กัน fullwidth digit)
-
-Run:
-    alembic upgrade head
-    gunicorn app:app -k uvicorn.workers.UvicornWorker -w 1 --timeout 120
-
-ENV:
-    DATABASE_URL=postgresql+asyncpg://...
-    REDIS_URL=redis://...
-    LINE_CHANNEL_ACCESS_TOKEN=...
-    LINE_CHANNEL_SECRET=...
-"""
-
 import asyncio
 import hashlib
 import logging
+import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
-from enum import Enum
-from typing import AsyncIterator, Optional
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-import redis.asyncio as redis
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     AsyncApiClient,
     AsyncMessagingApi,
     Configuration,
-    PushMessageRequest,
     ReplyMessageRequest,
     TextMessage,
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import (
-    Boolean,
-    Date,
-    DateTime,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    select,
-    text,
-)
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Boolean, Date, Integer, String, Text, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -72,58 +30,64 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-
 # =========================================================
 # Config
 # =========================================================
 
-class Settings(BaseSettings):
-    database_url:              str
-    redis_url:                 str
-    line_channel_access_token: str
-    line_channel_secret:       str
+LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+LINE_CHANNEL_SECRET = os.environ["LINE_CHANNEL_SECRET"]
 
-    wake_word:             str = "บอต"
-    reminder_hour:         int = 22
-    webhook_concurrency:   int = 20
-    pool_size:             int = 5
-    max_overflow:          int = 5
-    rate_limit_count:      int = 20
-    rate_limit_window_sec: int = 5
-    redis_lock_ttl_sec:    int = 10
+DATABASE_URL = "sqlite+aiosqlite:///./diary.db"
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-    )
+BANGKOK = ZoneInfo("Asia/Bangkok")
 
-    @field_validator(
-        "database_url", "redis_url",
-        "line_channel_access_token", "line_channel_secret",
-    )
-    @classmethod
-    def validate_not_empty(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("value cannot be empty")
-        return value
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# =========================================================
+# LINE
+# =========================================================
+
+line_config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+parser = WebhookParser(LINE_CHANNEL_SECRET)
+api_client = AsyncApiClient(line_config)
+line_api = AsyncMessagingApi(api_client)
+
+# =========================================================
+# Database
+# =========================================================
+
+class Base(DeclarativeBase):
+    pass
 
 
-settings = Settings()
+class DiaryEntry(Base):
+    __tablename__ = "diary_entries"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), index=True)
+    entry_date: Mapped[date] = mapped_column(Date, index=True)
+    code: Mapped[str] = mapped_column(String(32))
+    category: Mapped[str] = mapped_column(String(255))
+    done: Mapped[bool] = mapped_column(Boolean, default=True)
+    count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+engine = create_async_engine(
+    DATABASE_URL,
+    connect_args={"timeout": 30},
 )
-logger = logging.getLogger("diarybot")
 
+SessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
 # =========================================================
 # Constants
 # =========================================================
-
-BANGKOK = ZoneInfo("Asia/Bangkok")
 
 COMMAND_MAP: dict[str, str] = {
     "00": "News/Talk",
@@ -139,571 +103,349 @@ COMMAND_MAP: dict[str, str] = {
 }
 
 SUMMARY_CMDS = {"summary", "sum", "สรุป", "วันนี้"}
-HELP_CMDS    = {"รหัส", "help", "code", "?"}
-
-
-# =========================================================
-# Database Models
-# (schema managed by Alembic — ไม่ create_all ที่นี่)
-# =========================================================
-
-class Base(DeclarativeBase):
-    pass
-
-
-class DiaryUser(Base):
-    __tablename__ = "diary_users"
-
-    user_id: Mapped[str]  = mapped_column(String(255), primary_key=True)
-    active:  Mapped[bool] = mapped_column(Boolean, default=True)
-
-
-class DiaryEntry(Base):
-    __tablename__ = "diary_entries"
-
-    id:         Mapped[int]           = mapped_column(primary_key=True)
-    user_id:    Mapped[str]           = mapped_column(String(255), index=True)
-    entry_date: Mapped[date]          = mapped_column(Date, index=True)
-    code:       Mapped[str]           = mapped_column(String(32))
-    category:   Mapped[str]           = mapped_column(String(255))
-    done:       Mapped[bool]          = mapped_column(Boolean, default=True)
-    count:      Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    note:       Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[datetime]      = mapped_column(
-        DateTime(timezone=True),
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "entry_date", "code", name="uq_user_date_code"),
-    )
-
-
-engine = create_async_engine(
-    settings.database_url,
-    pool_size=settings.pool_size,
-    max_overflow=settings.max_overflow,
-    pool_pre_ping=True,
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
-
+HELP_CMDS = {"help", "รหัส", "code", "?"}
+NOTE_MAX_LEN = 500
 
 # =========================================================
-# Redis
+# Duplicate Protection
 # =========================================================
 
-redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+recent_events: dict[str, float] = {}
+DEDUP_TTL = 300       # วินาที
+DEDUP_MAX_SIZE = 1000 # จำกัด size ป้องกัน memory leak
 
 
-async def is_duplicate_event(body: bytes) -> bool:
-    digest  = hashlib.sha256(body).hexdigest()
-    created = await redis_client.set(f"event:{digest}", "1", ex=300, nx=True)
-    return created is None
+def is_duplicate(body: bytes) -> bool:
+    digest = hashlib.sha256(body).hexdigest()
+    now = time.time()
 
+    # ลบ entry ที่หมดอายุ
+    expired = [k for k, v in recent_events.items() if now - v > DEDUP_TTL]
+    for k in expired:
+        del recent_events[k]
 
-async def is_rate_limited(user_id: str) -> bool:
-    key   = f"rate:{user_id}"
-    count = await redis_client.incr(key)
-    if count == 1:
-        await redis_client.expire(key, settings.rate_limit_window_sec)
-    return count > settings.rate_limit_count
+    # ถ้า dict ใหญ่เกิน ลบ entry เก่าสุดออก
+    if len(recent_events) >= DEDUP_MAX_SIZE:
+        oldest = min(recent_events, key=recent_events.get)
+        del recent_events[oldest]
 
+    if digest in recent_events:
+        return True
+
+    recent_events[digest] = now
+    return False
+
+# =========================================================
+# App (lifespan แทน on_event ที่ deprecated)
+# =========================================================
 
 @asynccontextmanager
-async def user_lock(
-    user_id: str,
-    ttl: int = settings.redis_lock_ttl_sec,
-) -> AsyncIterator[bool]:
-    """Token-safe distributed lock — กัน lock ถูก release โดย request อื่น"""
-    key   = f"lock:user:{user_id}"
-    token = uuid.uuid4().hex
+async def lifespan(app: FastAPI):
+    # Startup
+    async with engine.begin() as conn:
+        # WAL mode: ลด lock contention, กัน "database is locked" บน async SQLite
+        await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+        await conn.exec_driver_sql("PRAGMA busy_timeout=5000;")
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database ready (WAL mode)")
+    logger.info(
+        "DiaryBot started | db=%s | tz=%s | workers=single",
+        DATABASE_URL,
+        BANGKOK,
+    )
 
-    acquired = await redis_client.set(key, token, ex=ttl, nx=True)
-    try:
-        yield bool(acquired)
-    finally:
-        if acquired:
-            current = await redis_client.get(key)
-            if current == token:
-                await redis_client.delete(key)
+    yield
 
-
-# =========================================================
-# LINE SDK (reusable client — สร้างครั้งเดียวใน lifespan)
-# =========================================================
-
-line_config = Configuration(access_token=settings.line_channel_access_token)
-line_parser = WebhookParser(settings.line_channel_secret)
-
-line_api_client:    Optional[AsyncApiClient]    = None
-line_messaging_api: Optional[AsyncMessagingApi] = None
+    # Shutdown
+    await api_client.close()
+    await engine.dispose()
+    logger.info("Shutdown complete")
 
 
-async def reply_message(reply_token: str, message: str) -> bool:
-    try:
-        assert line_messaging_api is not None
-        await line_messaging_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text=message[:2000])],
-            )
-        )
-        return True
-    except Exception:
-        logger.exception("reply_message failed")
-        return False
-
-
-async def push_message(user_id: str, message: str) -> bool:
-    try:
-        assert line_messaging_api is not None
-        await line_messaging_api.push_message(
-            PushMessageRequest(
-                to=user_id,
-                messages=[TextMessage(text=message[:2000])],
-            )
-        )
-        return True
-    except Exception:
-        logger.exception("push_message failed")
-        return False
-
+app = FastAPI(title="DiaryBot", lifespan=lifespan)
 
 # =========================================================
 # Helpers
 # =========================================================
 
-def now_bkk() -> datetime:
-    return datetime.now(BANGKOK)
+def today_bkk() -> date:
+    return datetime.now(BANGKOK).date()
 
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
 
 def get_symbol(target_date: date) -> str:
     return "●" if target_date.day % 2 == 0 else "■"
 
 
-async def safe_commit(db: AsyncSession) -> None:
-    try:
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise
-
+async def reply_message(reply_token: str, text: str) -> None:
+    await asyncio.wait_for(
+        line_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=text[:2000])],
+            )
+        ),
+        timeout=10,
+    )
 
 # =========================================================
 # Parser
 # =========================================================
 
-class EntryType(str, Enum):
-    HABIT   = "habit"
-    NOTE    = "note"
-    INVALID = "invalid"
-
-
 def parse_message(text: str) -> dict:
-    """
-    "55"           → HABIT count=None note=None
-    "55 3"         → HABIT count=3    note=None
-    "55 วิ่งสวน"   → HABIT count=None note="วิ่งสวน"
-    "55 3 วิ่งสวน" → HABIT count=3    note="วิ่งสวน"
-    "55 วิ่ง 3 รอบ"→ HABIT count=None note="วิ่ง 3 รอบ"
-    "ข้อความ"      → NOTE
-    "12 ..."       → INVALID
-    """
     text = text.strip()
-    if not text:
-        return {"type": EntryType.INVALID, "error": "ข้อความว่าง"}
 
-    parts    = text.split(maxsplit=2)
-    code     = parts[0]
+    if not text:
+        return {"type": "invalid"}
+
+    parts = text.split(maxsplit=2)
+    code = parts[0]
 
     if not re.fullmatch(r"\d{2}", code):
-        return {"type": EntryType.NOTE, "note": text}
+        return {"type": "note", "note": text}
 
     category = COMMAND_MAP.get(code)
+
     if not category:
-        return {"type": EntryType.INVALID, "error": f"ไม่รู้จักรหัส {code}"}
+        return {"type": "invalid"}
 
-    count: Optional[int] = None
-    note:  Optional[str] = None
+    count = None
+    note = None
 
-    if len(parts) >= 2:
-        second = parts[1]
-        # FIX: re.fullmatch กัน fullwidth digit "３", superscript "²"
-        if re.fullmatch(r"[0-9]+", second):
-            count = int(second)
-            if count <= 0:
-                return {"type": EntryType.INVALID, "error": "จำนวนต้องมากกว่า 0"}
-            if count > 1000:
-                return {"type": EntryType.INVALID, "error": "จำนวนมากเกินไป"}
-            if len(parts) == 3:
-                note = parts[2]
+    if len(parts) == 2:
+        if parts[1].isdigit():
+            count = int(parts[1])
         else:
+            note = parts[1]
+    elif len(parts) == 3:
+        if parts[1].isdigit():
+            count = int(parts[1])
+            note = parts[2]
+        else:
+            # กรณีพิมพ์เป็น "99 บันทึกข้อความ ยาว ยาว" 
             note = text[len(code):].strip()
 
-    return {"type": EntryType.HABIT, "code": code, "category": category, "count": count, "note": note}
-
+    return {
+        "type": "habit",
+        "code": code,
+        "category": category,
+        "count": count,
+        "note": note,
+    }
 
 # =========================================================
-# Summary & Help
+# Summary
 # =========================================================
 
 def build_summary(entries: list[DiaryEntry], target_date: date) -> str:
-    symbol  = get_symbol(target_date)
+    symbol = get_symbol(target_date)
     outline = "○" if symbol == "●" else "□"
 
-    habit_map  = {e.code: e for e in entries if not e.code.startswith("~~")}
-    free_notes = [e.note for e in entries if e.code.startswith("~~") and e.note]
+    habit_map = {
+        e.code: e
+        for e in entries
+        if not e.code.startswith("~~")
+    }
 
-    done_count = 0
     lines = [
-        f"📅 {target_date.strftime('%d %b %Y')} ({symbol} = วันนี้)",
+        f"📅 {target_date}",
         "─" * 24,
     ]
 
+    done_count = 0
+
     for code, category in COMMAND_MAP.items():
-        entry   = habit_map.get(code)
+        entry = habit_map.get(code)
+
         is_done = bool(entry and entry.done)
-        mark    = symbol if is_done else outline
+
+        mark = symbol if is_done else outline
+
         if is_done:
             done_count += 1
 
-        extras: list[str] = []
+        extra = ""
+
         if is_done and entry and entry.count:
-            extras.append(f"×{entry.count}")
+            extra += f" ×{entry.count}"
+
         if is_done and entry and entry.note:
-            extras.append(entry.note)
-        extra = f" · {' | '.join(extras)}" if extras else ""
+            extra += f" | {entry.note}"
 
         lines.append(f"{mark} {code} {category}{extra}")
 
-    if free_notes:
-        lines.append("─" * 24)
-        for note in free_notes:
-            lines.append(f"📝 {note}")
+    lines.append("─" * 24)
+    lines.append(f"✅ {done_count}/{len(COMMAND_MAP)}")
 
-    lines += ["─" * 24, f"✅ {done_count}/{len(COMMAND_MAP)} done"]
     return "\n".join(lines)
-
-
-def build_help() -> str:
-    lines = ["📋 Habit Codes", "─" * 24]
-    for code, category in COMMAND_MAP.items():
-        lines.append(f"  {code} = {category}")
-    lines += [
-        "─" * 24,
-        "55          → mark done ✅",
-        "55 3        → with count",
-        "55 วิ่งสวน  → with note",
-        "55 (ซ้ำ)    → undo ↩️",
-        "~ข้อความ     → free note",
-        "สรุป         → today summary",
-    ]
-    return "\n".join(lines)
-
-
-# =========================================================
-# DB Helpers
-# =========================================================
-
-async def register_user(db: AsyncSession, user_id: str) -> None:
-    if await db.get(DiaryUser, user_id):
-        return
-    db.add(DiaryUser(user_id=user_id, active=True))
-    try:
-        await safe_commit(db)
-    except IntegrityError:
-        await db.rollback()
-
-
-async def get_today_entries(
-    db: AsyncSession,
-    user_id: str,
-    today: date,
-) -> list[DiaryEntry]:
-    result = await db.execute(
-        select(DiaryEntry)
-        .where(DiaryEntry.user_id == user_id)
-        .where(DiaryEntry.entry_date == today)
-        .order_by(DiaryEntry.code)
-    )
-    return list(result.scalars().all())
-
 
 # =========================================================
 # Business Logic
 # =========================================================
 
-async def save_free_note(
-    db: AsyncSession,
-    user_id: str,
-    text: str,
-    today: date,
-) -> str:
-    note = text.lstrip("~").strip()
-    if re.match(r"^note(\s|$)", note, re.IGNORECASE):
-        note = note[4:].strip()
-    if not note:
-        return "❌ ไม่มีข้อความ"
-
-    db.add(DiaryEntry(
-        user_id=user_id, entry_date=today,
-        code=f"~~{uuid.uuid4().hex[:8]}",
-        category="Free Note", done=True,
-        note=note, updated_at=now_utc(),
-    ))
-    await safe_commit(db)
-    return f"📝 {note}"
-
-
 async def toggle_habit(
     db: AsyncSession,
     user_id: str,
     parsed: dict,
-    today: date,
 ) -> str:
-    symbol = get_symbol(today)
+    today = today_bkk()
 
-    result   = await db.execute(
-        select(DiaryEntry)
-        .where(DiaryEntry.user_id == user_id)
-        .where(DiaryEntry.entry_date == today)
-        .where(DiaryEntry.code == parsed["code"])
+    stmt = select(DiaryEntry).where(
+        DiaryEntry.user_id == user_id,
+        DiaryEntry.entry_date == today,
+        DiaryEntry.code == parsed["code"],
     )
+
+    result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
 
     if existing:
-        existing.done       = not existing.done
-        existing.updated_at = now_utc()
-        if existing.done:
+        # ถ้ามีอยู่แล้ว แต่อยากอัปเดตโน้ตหรือจำนวนเพิ่มเข้าไปใหม่
+        if parsed["count"] is not None or parsed["note"] is not None:
             existing.count = parsed["count"]
-            existing.note  = parsed["note"]
-        else:
-            existing.count = None
-            existing.note  = None
-        await safe_commit(db)
+            existing.note = parsed["note"]
+            await db.commit()
+            return f"📝 อัปเดต {parsed['code']} {parsed['category']}"
+        
+        # ถ้าส่งมาแค่รหัสเพียวๆ ถึงจะเรียกว่าเป็นการสั่ง Toggle (ลบออก)
+        await db.delete(existing)
+        await db.commit()
+        return f"↩️ ยกเลิก {parsed['code']} {parsed['category']}"
 
-        if existing.done:
-            lines = [f"{symbol} {existing.code} {existing.category} ✅"]
-            if existing.count:
-                lines.append(f"🔢 {existing.count}")
-            if existing.note:
-                lines.append(f"📝 {existing.note}")
-            return "\n".join(lines)
-        return f"↩️ ยกเลิก {existing.code} {existing.category}"
+    entry = DiaryEntry(
+        user_id=user_id,
+        entry_date=today,
+        code=parsed["code"],
+        category=parsed["category"],
+        done=True,
+        count=parsed["count"],
+        note=parsed["note"],
+    )
 
-    db.add(DiaryEntry(
-        user_id=user_id, entry_date=today,
-        code=parsed["code"], category=parsed["category"],
-        done=True, count=parsed["count"], note=parsed["note"],
-        updated_at=now_utc(),
-    ))
-    try:
-        await safe_commit(db)
-    except IntegrityError:
-        await db.rollback()
-        return "⚠️ มีการอัปเดตพร้อมกัน กรุณาลองใหม่"
+    db.add(entry)
+    await db.commit()
 
-    lines = [f"{symbol} {parsed['code']} {parsed['category']} ✅"]
-    if parsed["count"]:
-        lines.append(f"🔢 {parsed['count']}")
-    if parsed["note"]:
-        lines.append(f"📝 {parsed['note']}")
-    return "\n".join(lines)
+    symbol = get_symbol(today)
+    return f"{symbol} {parsed['code']} {parsed['category']}"
 
+# =========================================================
+# Message Processor
+# =========================================================
 
-async def process_message(db: AsyncSession, user_id: str, text: str) -> str:
-    await register_user(db, user_id)
+async def process_message(
+    db: AsyncSession,
+    user_id: str,
+    text: str,
+) -> str:
+    text = text.strip()
+    lower = text.lower()
+    today = today_bkk()
 
-    today    = now_bkk().date()
-    stripped = text.strip()
-    lower    = stripped.lower()
+    # Help
+    if lower in HELP_CMDS:
+        code_lines = "\n".join(
+            f"{code} = {category}"
+            for code, category in COMMAND_MAP.items()
+        )
+        return f"📋 Habit Codes\n\n{code_lines}\n\n~ข้อความ = บันทึก note\nsum = สรุปวันนี้"
 
+    # Summary
     if lower in SUMMARY_CMDS:
-        entries = await get_today_entries(db, user_id, today)
+        result = await db.execute(
+            select(DiaryEntry).where(
+                DiaryEntry.user_id == user_id,
+                DiaryEntry.entry_date == today,
+            )
+        )
+        entries = list(result.scalars().all())
         return build_summary(entries, today)
 
-    if lower in HELP_CMDS:
-        return build_help()
+    # Free note
+    if text.startswith("~"):
+        note = text[1:].strip()
 
-    if stripped.startswith("~") or re.match(r"^note(\s|$)", lower):
-        return await save_free_note(db, user_id, stripped, today)
+        if not note:
+            return "❌ note ว่างเปล่า"
 
-    parsed = parse_message(stripped)
+        if len(note) > NOTE_MAX_LEN:
+            return f"❌ note ยาวเกิน {NOTE_MAX_LEN} ตัวอักษร"
 
-    if parsed["type"] == EntryType.INVALID:
-        return f"❌ {parsed['error']}\nพิมพ์ 'รหัส' เพื่อดูรายการ"
+        entry = DiaryEntry(
+            user_id=user_id,
+            entry_date=today,
+            code=f"~~{uuid.uuid4().hex[:8]}",
+            category="note",
+            done=True,
+            note=note,
+        )
 
-    if parsed["type"] == EntryType.NOTE:
-        return "👋 DiaryBot\n55 = habit\n~ข้อความ = free note\nสรุป = summary"
+        db.add(entry)
+        await db.commit()
+        return f"📝 {note}"
 
-    async with user_lock(user_id) as locked:
-        if not locked:
-            return "⏳ กรุณารอสักครู่"
-        return await toggle_habit(db, user_id, parsed, today)
+    # Habit toggle
+    parsed = parse_message(text)
 
+    if parsed["type"] in ("invalid", "note"):
+        return "❌ ไม่รู้จักคำสั่ง พิมพ์ help เพื่อดูรหัส"
 
-# =========================================================
-# Scheduler
-# =========================================================
-
-scheduler = AsyncIOScheduler(timezone="Asia/Bangkok")
-
-
-async def reminder_job() -> None:
-    logger.info("reminder_job started")
-    today = now_bkk().date()
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(DiaryUser).where(DiaryUser.active.is_(True)))
-        users  = list(result.scalars().all())
-
-        for user in users:
-            try:
-                entries    = await get_today_entries(db, user.user_id, today)
-                done_count = sum(1 for e in entries if e.done and not e.code.startswith("~~"))
-
-                if done_count == 0:
-                    await push_message(user.user_id, "🌙 ยังไม่ได้บันทึกเลยวันนี้")
-                elif done_count < len(COMMAND_MAP) // 2:
-                    await push_message(user.user_id, f"🌙 วันนี้ทำแล้ว {done_count}/{len(COMMAND_MAP)}")
-            except Exception:
-                logger.exception("reminder_job failed user=%s", user.user_id[:8])
-
+    return await toggle_habit(db, user_id, parsed)
 
 # =========================================================
-# FastAPI Lifespan
+# Routes
 # =========================================================
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    global line_api_client, line_messaging_api
-
-    logger.info("starting diarybot v3")
-
-    # Schema managed by Alembic
-    # รัน `alembic upgrade head` ก่อน start server เสมอ
-
-    line_api_client    = AsyncApiClient(line_config)
-    line_messaging_api = AsyncMessagingApi(line_api_client)
-
-    # IMPORTANT: -w 1 เสมอ — APScheduler in-process
-    # หลาย workers = reminder job ยิงซ้ำ
-    scheduler.add_job(
-        reminder_job, "cron",
-        hour=settings.reminder_hour, minute=0,
-        replace_existing=True, id="daily_reminder",
-    )
-    if not scheduler.running:
-        scheduler.start()
-
-    logger.info("diarybot v3 started")
-    yield
-
-    logger.info("shutdown started")
-    scheduler.shutdown(wait=False)
-    if line_api_client:
-        await line_api_client.close()
-    await engine.dispose()
-    await redis_client.aclose()
-    logger.info("shutdown completed")
-
-
-# =========================================================
-# FastAPI App
-# =========================================================
-
-app = FastAPI(title="DiaryBot v3", lifespan=lifespan)
-
-webhook_semaphore = asyncio.Semaphore(settings.webhook_concurrency)
-
-
-@app.get("/")
-async def home():
-    return {"status": "running", "version": "3"}
+VERSION = "1.0.0"
 
 
 @app.get("/ping")
 async def ping():
-    return "pong"
-
-
-@app.get("/health")
-async def health():
-    try:
-        async with AsyncSessionLocal() as db:
-            await db.execute(text("SELECT 1"))
-        await redis_client.ping()
-        return {
-            "status":    "ok",
-            "db":        "ok",
-            "redis":     "ok",
-            "scheduler": scheduler.running,
-        }
-    except Exception:
-        logger.exception("health failed")
-        raise HTTPException(status_code=500, detail="unhealthy")
+    return {
+        "status": "ok",
+        "version": VERSION,
+        "time": datetime.now(BANGKOK).isoformat(),
+        "tz": str(BANGKOK),
+    }
 
 
 @app.post("/callback")
-async def callback(
-    request: Request,
-    background_tasks: BackgroundTasks,  # FIX: BackgroundTasks แทน create_task
-):
-    signature = request.headers.get("X-Line-Signature", "")
-    body      = await request.body()
+async def callback(request: Request):
+    body = await request.body()
 
-    if await is_duplicate_event(body):
+    if is_duplicate(body):
+        logger.info("Duplicate webhook ignored")
         return {"status": "duplicate"}
 
+    signature = request.headers.get("X-Line-Signature", "")
+
     try:
-        events = line_parser.parse(
-            body.decode("utf-8", errors="replace"),
-            signature,
-        )
+        events = parser.parse(body.decode("utf-8"), signature)
     except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="invalid signature")
-    except Exception:
-        logger.exception("callback parse failed")
-        raise HTTPException(status_code=500, detail="parse failed")
+        raise HTTPException(status_code=401, detail="invalid signature")
 
     for event in events:
-        if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
-            background_tasks.add_task(handle_event, event)  # FIX: safe ทุก context
+        if not isinstance(event, MessageEvent):
+            continue
+
+        if not isinstance(event.message, TextMessageContent):
+            continue
+
+        user_id = getattr(event.source, "user_id", None)
+
+        if not user_id:
+            continue
+
+        text = event.message.text.strip()
+
+        async with SessionLocal() as db:
+            try:
+                response = await process_message(db, user_id, text)
+            except Exception:
+                logger.exception("process_message error")
+                response = "❌ เกิดข้อผิดพลาด กรุณาลองใหม่"
+
+        try:
+            await reply_message(event.reply_token, response)
+        except Exception:
+            logger.exception("reply_message error")
 
     return {"status": "ok"}
-
-
-async def handle_event(event: MessageEvent) -> None:
-    async with webhook_semaphore:
-        try:
-            user_id = getattr(event.source, "user_id", None)
-            if not user_id:
-                return
-
-            text = event.message.text.strip()
-
-            if event.source.type in ["group", "room"]:
-                if not text.startswith(settings.wake_word):
-                    return
-                text = text[len(settings.wake_word):].strip() or "สรุป"
-
-            if await is_rate_limited(user_id):
-                await push_message(user_id, "⚠️ ส่งข้อความเร็วเกินไป")
-                return
-
-            async with AsyncSessionLocal() as db:
-                response = await process_message(db, user_id, text)
-
-            ok = await reply_message(event.reply_token, response)
-            if not ok:
-                await push_message(user_id, response)
-
-        except Exception:
-            logger.exception("handle_event failed")
