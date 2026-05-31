@@ -81,58 +81,12 @@ def parse_message(text: str) -> dict:
     }
 
 
-def build_summary(entries: list[DiaryEntry], target_date: date) -> str:
-    symbol = get_symbol(target_date)
-    outline = "○" if symbol == "●" else "□"
-
-    habit_map = {
-        e.code: e
-        for e in entries
-        if not e.code.startswith("~~")
-    }
-
-    lines = [
-        f"📅 {target_date}",
-        "─" * 24,
-    ]
-
-    done_count = 0
-
-    for code, category in COMMAND_MAP.items():
-        entry = habit_map.get(code)
-        is_done = bool(entry and entry.done)
-        mark = symbol if is_done else outline
-
-        if is_done:
-            done_count += 1
-
-        extra = ""
-        if is_done and entry and entry.count:
-            extra += f" ×{entry.count}"
-        if is_done and entry and entry.note:
-            extra += f" | {entry.note}"
-
-        lines.append(f"{mark} {code} {category}{extra}")
-
-    # ดึง free note มาแถมต่อท้ายใน text summary ดั้งเดิม
-    notes = [e.note for e in entries if e.code.startswith("~~") and e.note]
-    if notes:
-        lines.append("─" * 24)
-        lines.append("📝 บันทึกวันนี้:")
-        for idx, n in enumerate(notes, 1):
-            lines.append(f"  {idx}. {n}")
-
-    lines.append("─" * 24)
-    lines.append(f"✅ {done_count}/{len(COMMAND_MAP)}")
-
-    return "\n".join(lines)
-
-
 async def toggle_habit(
     db: AsyncSession,
     user_id: str,
     parsed: dict,
-) -> str:
+) -> dict:
+    """สั่งเปิด-ปิดรหัสความสำเร็จ พร้อมคำนวณจำนวนที่เสร็จสิ้นประจำวันเพื่อคืนค่า Flex Confirmation"""
     today = today_bkk()
 
     stmt = select(DiaryEntry).where(
@@ -144,54 +98,67 @@ async def toggle_habit(
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
 
+    is_done = True
     if existing:
         # ถ้ามีอยู่แล้ว แต่อยากอัปเดตโน้ตหรือจำนวนเพิ่มเข้าไปใหม่
         if parsed["count"] is not None or parsed["note"] is not None:
             existing.count = parsed["count"]
             existing.note = parsed["note"]
             await db.commit()
-            return f"📝 อัปเดต {parsed['code']} {parsed['category']}"
-        
-        # ถ้าส่งมาแค่รหัสเพียวๆ ถึงจะเรียกว่าเป็นการสั่ง Toggle (ลบออก)
-        await db.delete(existing)
+            logger.info(f"Updated habit {parsed['code']} with count={parsed['count']} note={parsed['note']} for user {user_id}")
+        else:
+            # ถ้าส่งมาแค่รหัสเพียวๆ ถึงจะเรียกว่าเป็นการสั่ง Toggle (ลบออก)
+            await db.delete(existing)
+            await db.commit()
+            is_done = False
+            logger.info(f"Toggled OFF habit {parsed['code']} for user {user_id}")
+    else:
+        # หากยังไม่มี ให้สร้างใหม่
+        entry = DiaryEntry(
+            user_id=user_id,
+            entry_date=today,
+            code=parsed["code"],
+            category=parsed["category"],
+            done=True,
+            count=parsed["count"],
+            note=parsed["note"],
+        )
+        db.add(entry)
         await db.commit()
-        return f"↩️ ยกเลิก {parsed['code']} {parsed['category']}"
+        logger.info(f"Toggled ON habit {parsed['code']} for user {user_id}")
 
-    entry = DiaryEntry(
-        user_id=user_id,
-        entry_date=today,
-        code=parsed["code"],
-        category=parsed["category"],
-        done=True,
-        count=parsed["count"],
-        note=parsed["note"],
+    # ดึงข้อมูลของวันนี้ทั้งหมดเพื่อสรุปความก้าวหน้าระหว่างวัน
+    summary_stmt = select(DiaryEntry).where(
+        DiaryEntry.user_id == user_id,
+        DiaryEntry.entry_date == today,
     )
+    summary_res = await db.execute(summary_stmt)
+    entries = list(summary_res.scalars().all())
 
-    db.add(entry)
-    await db.commit()
+    # คำนวณเปอร์เซ็นต์
+    done_count = sum(1 for e in entries if not e.code.startswith("~~") and e.done)
+    total_habits = len(COMMAND_MAP)
 
-    symbol = get_symbol(today)
-    return f"{symbol} {parsed['code']} {parsed['category']}"
+    from flex.flex_builders import build_toggle_flex
+    return build_toggle_flex(parsed["code"], parsed["category"], is_done, done_count, total_habits)
 
 
 async def process_message(
     db: AsyncSession,
     user_id: str,
     text: str,
-) -> str:
+) -> str | dict:
+    """แกนหลักประมวลผลวิเคราะห์ข้อความ คืนค่าเป็น Text (ข้อความปกติ) หรือ Dict (Flex Message JSON)"""
     text = text.strip()
     lower = text.lower()
     today = today_bkk()
 
-    # Help
+    # Help Menu (Flex Grid 2 คอลัมน์)
     if lower in HELP_CMDS:
-        code_lines = "\n".join(
-            f"{code} = {category}"
-            for code, category in COMMAND_MAP.items()
-        )
-        return f"📋 Habit Codes\n\n{code_lines}\n\n~ข้อความ = บันทึก note\nsum = สรุปวันนี้"
+        from flex.flex_builders import build_help_flex
+        return build_help_flex(COMMAND_MAP)
 
-    # Summary
+    # Summary Report (Flex Progress Bar + Reflections)
     if lower in SUMMARY_CMDS:
         result = await db.execute(
             select(DiaryEntry).where(
@@ -200,9 +167,10 @@ async def process_message(
             )
         )
         entries = list(result.scalars().all())
-        return build_summary(entries, today)
+        from flex.flex_builders import build_summary_flex
+        return build_summary_flex(entries, today, COMMAND_MAP)
 
-    # Free note
+    # Free note (Text)
     if text.startswith("~"):
         note = text[1:].strip()
 
@@ -225,7 +193,7 @@ async def process_message(
         await db.commit()
         return f"📝 {note}"
 
-    # Habit toggle
+    # Habit toggle (Flex Confirmation)
     parsed = parse_message(text)
 
     if parsed["type"] in ("invalid", "note"):

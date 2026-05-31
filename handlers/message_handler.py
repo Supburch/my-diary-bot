@@ -4,6 +4,8 @@ from linebot.v3.messaging import (
     AsyncMessagingApi,
     ReplyMessageRequest,
     TextMessage,
+    FlexMessage,
+    FlexContainer,
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,14 +13,31 @@ from services.diary_service import process_message
 
 logger = logging.getLogger(__name__)
 
-async def reply_message(line_api: AsyncMessagingApi, reply_token: str, text: str) -> None:
-    """ส่งกลับข้อความหาผู้ใช้ผ่าน LINE API"""
+async def reply_message(line_api: AsyncMessagingApi, reply_token: str, response: str | dict) -> None:
+    """ส่งกลับข้อความหาผู้ใช้ผ่าน LINE API รองรับทั้งข้อความธรรมดา (str) และ Flex Message (dict)"""
     try:
+        if isinstance(response, dict):
+            # กำหนดข้อความการแจ้งเตือนล็อกหน้าจอ (Alt Text) ตามประเภทเนื้อหา
+            alt_text = "Habit Tracker"
+            if "HABIT TRACKER CODES" in str(response):
+                alt_text = "📋 รายการรหัส Habit"
+            elif "DAILY DIARY" in str(response):
+                alt_text = "📅 สรุปประวัติไดอารี่ประจำวัน"
+            elif "บันทึกความสำเร็จ!" in str(response) or "ยกเลิกบันทึกแล้ว" in str(response):
+                alt_text = "📝 อัปเดตความสำเร็จ Habit"
+
+            container = FlexContainer.from_dict(response)
+            messages = [FlexMessage(alt_text=alt_text, contents=container)]
+            logger.info("Sending Flex Message response.")
+        else:
+            messages = [TextMessage(text=response[:2000])]
+            logger.info("Sending Text Message response.")
+
         await asyncio.wait_for(
             line_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
-                    messages=[TextMessage(text=text[:2000])],
+                    messages=messages,
                 )
             ),
             timeout=10,
