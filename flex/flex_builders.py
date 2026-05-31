@@ -68,7 +68,6 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                 }
                 row_boxes.append(box)
             else:
-                # เติม box เปล่าเพื่อไม่ให้เบี้ยว
                 row_boxes.append({"type": "box", "layout": "vertical", "flex": 1})
         
         grid_contents.append({
@@ -146,7 +145,18 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
         }
     }
     
-    return bubble
+    # สร้างข้อความสำหรับ Fallback ข้อความธรรมดา
+    fallback_lines = ["📋 Habit Tracker Codes\n"]
+    for code, category in command_map.items():
+        fallback_lines.append(f"{code} = {category}")
+    fallback_lines.append("\n~ข้อความ = บันทึก note\nsum = สรุปวันนี้")
+    
+    return {
+        "type": "flex",
+        "alt_text": "📋 รายการรหัส Habit",
+        "contents": bubble,
+        "fallback_text": "\n".join(fallback_lines)
+    }
 
 def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int) -> dict:
     """สร้าง Flex Message การ์ดตอบรับด่วนเวลาผู้ใช้สั่ง Toggle"""
@@ -258,17 +268,30 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
         }
     }
     
-    return bubble
+    fallback_text = f"{mark_symbol} {code} {category} | {action_text} (รวมวันนี้: {done_count}/{total_habits})"
+    
+    return {
+        "type": "flex",
+        "alt_text": "📝 อัปเดตความสำเร็จ Habit",
+        "contents": bubble,
+        "fallback_text": fallback_text
+    }
 
 def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map: dict[str, str]) -> dict:
     """สร้าง Flex Message หน้าสรุปคะแนนประจำวันพร้อมเกจความคืบหน้าและกล่อง Reflection"""
-    # แยกประเภทรหัส Habit
     habit_map = {e.code: e for e in entries if not e.code.startswith("~~")}
     
     done_count = 0
     list_contents = []
     
-    # วนลูปสร้างรายการ Habit 10 แถว
+    # สำหรับข้อความ Fallback
+    symbol = "●" if target_date.day % 2 == 0 else "■"
+    outline = "○" if symbol == "●" else "□"
+    fallback_lines = [
+        f"📅 {target_date}",
+        "─" * 24
+    ]
+    
     for code, category in command_map.items():
         entry = habit_map.get(code)
         is_done = bool(entry and entry.done)
@@ -289,12 +312,23 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
                 extra_details.append(entry.note)
                 
             extra_text = f" ({', '.join(extra_details)})" if extra_details else ""
+            
+            # บันทึกใส่ fallback
+            fallback_extra = ""
+            if entry.count:
+                fallback_extra += f" ×{entry.count}"
+            if entry.note:
+                fallback_extra += f" | {entry.note}"
+            fallback_lines.append(f"{symbol} {code} {category}{fallback_extra}")
         else:
             mark_color = "#475569"
             mark_text = "○"
             text_color = "#64748B"
             weight_str = "regular"
             extra_text = ""
+            
+            # บันทึกใส่ fallback
+            fallback_lines.append(f"{outline} {code} {category}")
 
         row = {
             "type": "box",
@@ -327,11 +361,9 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
     total_habits = len(command_map)
     percentage = int((done_count / total_habits) * 100)
     
-    # แยกบันทึกโน้ตฟรีสไตล์ออกมา
     notes = [e.note for e in entries if e.code.startswith("~~") and e.note]
     
     body_contents = [
-        # ส่วน Progress Bar บางๆ
         {
             "type": "box",
             "layout": "vertical",
@@ -383,7 +415,6 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
             "color": "#1E293B",
             "margin": "md"
         },
-        # รายการ Habits ทั้ง 10
         {
             "type": "box",
             "layout": "vertical",
@@ -393,9 +424,10 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         }
     ]
     
-    # ถ้ามี free note ให้แถมกล่องกระดาษโน้ตสี Amber Warm สุดหรูหรา
     if notes:
         note_rows = []
+        fallback_lines.append("─" * 24)
+        fallback_lines.append("📝 บันทึกวันนี้:")
         for idx, n in enumerate(notes, 1):
             note_rows.append({
                 "type": "text",
@@ -405,6 +437,7 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
                 "wrap": True,
                 "margin": "xs"
             })
+            fallback_lines.append(f"  {idx}. {n}")
             
         body_contents.append({
             "type": "separator",
@@ -437,6 +470,9 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
                 }
             ]
         })
+
+    fallback_lines.append("─" * 24)
+    fallback_lines.append(f"✅ {done_count}/{total_habits}")
 
     bubble = {
         "type": "bubble",
@@ -474,4 +510,9 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         }
     }
     
-    return bubble
+    return {
+        "type": "flex",
+        "alt_text": "📅 สรุปประวัติไดอารี่ประจำวัน",
+        "contents": bubble,
+        "fallback_text": "\n".join(fallback_lines)
+    }

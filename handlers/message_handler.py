@@ -14,23 +14,32 @@ from services.diary_service import process_message
 logger = logging.getLogger(__name__)
 
 async def reply_message(line_api: AsyncMessagingApi, reply_token: str, response: str | dict) -> None:
-    """ส่งกลับข้อความหาผู้ใช้ผ่าน LINE API รองรับทั้งข้อความธรรมดา (str) และ Flex Message (dict)"""
+    """ส่งกลับข้อความหาผู้ใช้ผ่าน LINE API รองรับทั้งข้อความธรรมดา (str/dict) และ Flex Message (dict)
+    พร้อมมีระบบ JSON Validation และ Fallback เพื่อความปลอดภัยสูงสุดในโปรดักชัน
+    """
     try:
-        if isinstance(response, dict):
-            # กำหนดข้อความการแจ้งเตือนล็อกหน้าจอ (Alt Text) ตามประเภทเนื้อหา
-            alt_text = "Habit Tracker"
-            if "HABIT TRACKER CODES" in str(response):
-                alt_text = "📋 รายการรหัส Habit"
-            elif "DAILY DIARY" in str(response):
-                alt_text = "📅 สรุปประวัติไดอารี่ประจำวัน"
-            elif "บันทึกความสำเร็จ!" in str(response) or "ยกเลิกบันทึกแล้ว" in str(response):
-                alt_text = "📝 อัปเดตความสำเร็จ Habit"
-
-            container = FlexContainer.from_dict(response)
-            messages = [FlexMessage(alt_text=alt_text, contents=container)]
-            logger.info("Sending Flex Message response.")
+        if isinstance(response, dict) and response.get("type") == "flex":
+            alt_text = response.get("alt_text", "Habit Tracker Update")
+            bubble_contents = response.get("contents")
+            fallback_text = response.get("fallback_text", alt_text)
+            
+            try:
+                # [CRITICAL CHECK] ทำการทดสอบคอมไพล์โครงสร้าง Flex Message
+                container = FlexContainer.from_dict(bubble_contents)
+                messages = [FlexMessage(alt_text=alt_text, contents=container)]
+                logger.info(f"Successfully compiled and sending Flex Message: {alt_text}")
+            except Exception as e:
+                # [ROBUST FALLBACK] หาก Flex พังจากการประมวลผล จะทำการส่งข้อความธรรมดากลับไปทันทีเพื่อให้บอตไม่เงียบหาย
+                logger.error(f"LINE Flex validation failed! Falling back to text message. Error: {e}")
+                messages = [TextMessage(text=fallback_text[:2000])]
         else:
-            messages = [TextMessage(text=response[:2000])]
+            # ดึงข้อความดิบ
+            if isinstance(response, dict) and response.get("type") == "text":
+                text_content = response.get("text", "")
+            else:
+                text_content = str(response)
+                
+            messages = [TextMessage(text=text_content[:2000])]
             logger.info("Sending Text Message response.")
 
         await asyncio.wait_for(
