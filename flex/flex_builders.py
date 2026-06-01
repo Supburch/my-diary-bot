@@ -186,7 +186,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                     "contents": [
                         {
                             "type": "text",
-                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note): พิมพ์ ~ข้อความที่ต้องการบันทึก",
+                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note): พิมพ์ ~ข้อความสั้นๆที่ต้องการบันทึก",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
