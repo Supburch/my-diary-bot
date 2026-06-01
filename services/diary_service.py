@@ -252,6 +252,7 @@ async def toggle_habit(
         is_done,
         done_count,
         total_habits,
+        command_map,
         current_streak=current_streak,
     )
 
@@ -272,13 +273,13 @@ async def process_message(
         start_date = today - timedelta(days=6)
         stats = await get_period_summary(db, user_id, start_date, today, command_map)
         from flex.flex_builders import build_period_summary_flex
-        return build_period_summary_flex("Weekly Summary", start_date, today, stats)
+        return build_period_summary_flex("Weekly Summary", start_date, today, stats, command_map)
 
     if lower in MONTHLY_CMDS:
         start_date = today - timedelta(days=29)
         stats = await get_period_summary(db, user_id, start_date, today, command_map)
         from flex.flex_builders import build_period_summary_flex
-        return build_period_summary_flex("Monthly Summary", start_date, today, stats)
+        return build_period_summary_flex("Monthly Summary", start_date, today, stats, command_map)
 
     # Help Menu (Flex Grid 2 คอลัมน์)
     if lower in HELP_CMDS:

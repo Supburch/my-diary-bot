@@ -12,46 +12,79 @@ class QuickReplyContext(Enum):
     SUMMARY = "summary"
     TOGGLE = "toggle"
 
-def build_quick_reply(context: QuickReplyContext) -> QuickReply | None:
+def get_quick_reply_habits(
+    command_map: dict[str, str],
+    context: QuickReplyContext,
+) -> list[tuple[str, str]]:
+    """เรียงลำดับความสำคัญและคัดเลือก Habit ที่เหมาะสมเพื่อนำไปสร้าง Quick Reply (Cap สูงสุดไม่เกิน LINE Limit 13)"""
+    # จัดลำดับความสำคัญแบบ Context-Aware:
+    # 99, 77, 66, 33, 11, 44, 55 เป็นกลุ่มยอดนิยม/ใช้บ่อย ควรจะอยู่ซ้ายสุดเพื่อให้กดง่าย
+    priority_order = ["99", "77", "66", "33", "11", "44", "55", "22", "88", "00"]
+    
+    # ดึงเฉพาะรหัสที่มีอยู่ใน user's command_map
+    available_codes = [c for c in priority_order if c in command_map]
+    
+    # หากผู้ใช้เพิ่มรหัสใหม่ (เช่น "01", "02") ที่ไม่อยู่ในลำดับ priority ด้านบน ให้เอามาต่อท้าย
+    for c in command_map.keys():
+        if c not in available_codes:
+            available_codes.append(c)
+            
+    # คำนวณจำนวนที่แสดงได้
+    # LINE Limit = 13 items
+    max_items = 13
+    
+    if context == QuickReplyContext.TOGGLE:
+        # มีปุ่ม "📊 สรุปวันนี้" เป็นตัวเด่น -> จองไว้ 1
+        reserved = 1
+        limit = max_items - reserved
+        
+        # จัดเรียงให้ปุ่ม "สรุปวันนี้" อยู่ลำดับแรก
+        habits = []
+        for c in available_codes[:limit]:
+            icon = HABIT_ICONS.get(c, "▪")
+            name = command_map[c]
+            habits.append((f"{icon} {c} {name}", c))
+            
+        return [("📊 สรุปวันนี้", "รวม")] + habits
+        
+    elif context == QuickReplyContext.SUMMARY:
+        # มีปุ่ม "❓ เมนู" เป็นตัวรอง -> จองไว้ 1
+        reserved = 1
+        limit = max_items - reserved
+        
+        habits = []
+        for c in available_codes[:limit]:
+            icon = HABIT_ICONS.get(c, "▪")
+            name = command_map[c]
+            habits.append((f"{icon} {c} {name}", c))
+            
+        return habits + [("❓ เมนู", "เมนู")]
+        
+    elif context == QuickReplyContext.HELP:
+        # หน้าช่วยเหลือนำเสนอรหัสเรียงตามรหัสลำดับแบบดั้งเดิม (00, 11, 22... ไปเรื่อยๆ จนถึง 99) 
+        # และต่อด้วย "📊 สรุปวันนี้" -> จองไว้ 1
+        reserved = 1
+        limit = max_items - reserved
+        
+        # เรียงตามลำดับรหัสดั้งเดิม (หรือลำดับคีย์ของ command_map)
+        sorted_codes = sorted(list(command_map.keys()))
+        
+        habits = []
+        for c in sorted_codes[:limit]:
+            icon = HABIT_ICONS.get(c, "▪")
+            name = command_map[c]
+            habits.append((f"{icon} {c} {name}", c))
+            
+        return habits + [("📊 สรุปวันนี้", "รวม")]
+        
+    return []
+
+def build_quick_reply(context: QuickReplyContext, command_map: dict[str, str]) -> QuickReply | None:
     """สร้าง QuickReply ออบเจกต์ตามแต่ละสถานการณ์การจิ้มของผู้ใช้งานเพื่อเพิ่มความสะดวกสบาย"""
     items = []
     
-    if context == QuickReplyContext.TOGGLE:
-        # บันทึกความสำเร็จเรียบร้อย -> เน้นให้ดูสรุปผลลัพธ์เป็นอันดับหนึ่ง ตามด้วย Habit ที่ใช้บ่อยมาก (จัดลำดับไม่ให้ล้น scroll blindspot)
-        actions = [
-            ("📊 สรุปวันนี้", "รวม"),
-            ("💻 99 AI Coding", "99"),
-            ("🧘 77 Mindfulness", "77"),
-            ("📖 11 5min Read", "11"),
-            ("💪 33 PU @ 10", "33"),
-        ]
-    elif context == QuickReplyContext.SUMMARY:
-        # ผู้ใช้กำลังดู Dashboard สรุปความก้าวหน้า -> เน้นปุ่ม Habit ยอดนิยมเพื่อดึงดูดใจให้จิ้มบันทึกรายการอื่นๆ ต่อ
-        actions = [
-            ("💻 99 AI Coding", "99"),
-            ("📈 66 Trade/Invest", "66"),
-            ("🧘 77 Mindfulness", "77"),
-            ("🏃 44 Squad @ 35", "44"),
-            ("🚶 55 Walk 2Km", "55"),
-            ("💪 33 PU @ 10", "33"),
-            ("❓ เมนู", "เมนู"),
-        ]
-    elif context == QuickReplyContext.HELP:
-        # ผู้ใช้กำลังศึกษาคำสั่งคีย์ -> แสดงรหัส Habit ครบถ้วนเป็นระเบียบตามลำดับ
-        actions = [
-            ("💬 00 News/Talk", "00"),
-            ("📖 11 5min Read", "11"),
-            ("🎥 22 Documentary", "22"),
-            ("💪 33 PU @ 10", "33"),
-            ("🏃 44 Squad @ 35", "44"),
-            ("🚶 55 Walk 2Km", "55"),
-            ("📈 66 Trade/Invest", "66"),
-            ("🧘 77 Mindfulness", "77"),
-            ("🏡 88 Farm/House", "88"),
-            ("💻 99 AI Coding", "99"),
-            ("📊 สรุปวันนี้", "รวม"),
-        ]
-    else:
+    actions = get_quick_reply_habits(command_map, context)
+    if not actions:
         return None
 
     for label, text in actions:
@@ -215,10 +248,10 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
         "alt_text": "📋 รายการรหัส Habit",
         "contents": bubble,
         "fallback_text": "\n".join(fallback_lines),
-        "quick_reply": build_quick_reply(QuickReplyContext.HELP)
+        "quick_reply": build_quick_reply(QuickReplyContext.HELP, command_map)
     }
 
-def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int, current_streak: int = 0) -> dict:
+def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int, command_map: dict[str, str], current_streak: int = 0) -> dict:
     """สร้าง Flex Message การ์ดตอบรับด่วนเวลาผู้ใช้สั่ง Toggle"""
     percentage = int((done_count / total_habits) * 100)
     icon = HABIT_ICONS.get(code, "▪")
@@ -339,7 +372,7 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
         "alt_text": "📝 อัปเดตความสำเร็จ Habit",
         "contents": bubble,
         "fallback_text": fallback_text,
-        "quick_reply": build_quick_reply(QuickReplyContext.TOGGLE)
+        "quick_reply": build_quick_reply(QuickReplyContext.TOGGLE, command_map)
     }
 
 def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map: dict[str, str], current_streak: int = 0, best_streak: int = 0) -> dict:
@@ -602,7 +635,7 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         "alt_text": "📅 สรุปประวัติไดอารี่ประจำวัน",
         "contents": bubble,
         "fallback_text": "\n".join(fallback_lines),
-        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY)
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
     }
 
 
@@ -610,7 +643,8 @@ def build_period_summary_flex(
     period_name: str,
     start_date: date,
     end_date: date,
-    stats: dict
+    stats: dict,
+    command_map: dict[str, str]
 ) -> dict:
     """สร้าง Flex Message การ์ดรายงานสรุปสถิติประจำช่วงเวลา (Weekly/Monthly Summary) ดีไซน์หรู Zen Slate"""
     completion_rate = stats["completion_rate"]
@@ -804,5 +838,5 @@ def build_period_summary_flex(
         "alt_text": f"📊 รายงานสรุปสถิติ {period_name}",
         "contents": bubble,
         "fallback_text": fallback_text,
-        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY)
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
     }
