@@ -167,6 +167,18 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
     action_color = "#34D399" if is_done else "#EF4444"
     mark_symbol = "✓" if is_done else "↩️"
     
+    # [P1 COMPATIBILITY CHECK] ป้องกันปัญหาการพล็อต width: 0% บนบาง LINE Client โดยใช้แถบว่างแทนถ้ายังไม่มี progress
+    inner_bar = []
+    if percentage > 0:
+        inner_bar.append({
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#34D399",
+            "height": "6px",
+            "cornerRadius": "md",
+            "width": f"{percentage}%"
+        })
+    
     bubble = {
         "type": "bubble",
         "size": "mega",
@@ -251,16 +263,7 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
                             "height": "6px",
                             "cornerRadius": "md",
                             "margin": "xs",
-                            "contents": [
-                                {
-                                    "type": "box",
-                                    "layout": "vertical",
-                                    "backgroundColor": "#34D399",
-                                    "height": "6px",
-                                    "cornerRadius": "md",
-                                    "width": f"{percentage}%"
-                                }
-                            ]
+                            "contents": inner_bar
                         }
                     ]
                 }
@@ -361,6 +364,18 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
     total_habits = len(command_map)
     percentage = int((done_count / total_habits) * 100)
     
+    # [P1 COMPATIBILITY CHECK] ป้องกันปัญหาการพล็อต width: 0% สำหรับแถบเปอร์เซ็นต์ในหน้าสรุปรายวัน
+    inner_summary_bar = []
+    if percentage > 0:
+        inner_summary_bar.append({
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#34D399",
+            "height": "6px",
+            "cornerRadius": "md",
+            "width": f"{percentage}%"
+        })
+
     notes = [e.note for e in entries if e.code.startswith("~~") and e.note]
     
     body_contents = [
@@ -397,16 +412,7 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
                     "height": "6px",
                     "cornerRadius": "md",
                     "margin": "xs",
-                    "contents": [
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "backgroundColor": "#34D399",
-                            "height": "6px",
-                            "cornerRadius": "md",
-                            "width": f"{percentage}%"
-                        }
-                    ]
+                    "contents": inner_summary_bar
                 }
             ]
         },

@@ -61,9 +61,8 @@ DEDUP_TTL = 300       # วินาที
 DEDUP_MAX_SIZE = 1000 # จำกัดขนาดป้องกัน memory leak
 recent_events_lock = asyncio.Lock()
 
-async def is_duplicate(body: bytes) -> bool:
+async def is_event_duplicate(dedup_id: str) -> bool:
     async with recent_events_lock:
-        digest = hashlib.sha256(body).hexdigest()
         now = time.time()
 
         # ลบ entry ที่หมดอายุ
@@ -76,10 +75,10 @@ async def is_duplicate(body: bytes) -> bool:
             oldest = min(recent_events, key=recent_events.get)
             del recent_events[oldest]
 
-        if digest in recent_events:
+        if dedup_id in recent_events:
             return True
 
-        recent_events[digest] = now
+        recent_events[dedup_id] = now
         return False
 
 # =========================================================
@@ -178,11 +177,6 @@ async def health():
 @app.post("/callback")
 async def callback(request: Request):
     body = await request.body()
-
-    if await is_duplicate(body):
-        logger.info("Duplicate webhook ignored")
-        return {"status": "duplicate"}
-
     signature = request.headers.get("X-Line-Signature", "")
 
     try:
@@ -193,6 +187,19 @@ async def callback(request: Request):
     for event in events:
         if not isinstance(event, MessageEvent):
             continue
+
+        # [P1 DEDUP BY LINE EVENT ID] ตรวจเช็คการทำซ้ำจาก ID ประจำตัวของ LINE โดยตรง
+        event_id = getattr(event, "webhook_event_id", None)
+        if event_id:
+            if await is_event_duplicate(event_id):
+                logger.info(f"Duplicate LINE Event ID {event_id} ignored")
+                continue
+        else:
+            # Fallback ไปลัด hash body ดั้งเดิมหากไม่พบ ID
+            body_hash = hashlib.sha256(body).hexdigest()
+            if await is_event_duplicate(body_hash):
+                logger.info("Duplicate body hash ignored")
+                continue
 
         async with SessionLocal() as db:
             await handle_webhook_event(event, db, line_api)
