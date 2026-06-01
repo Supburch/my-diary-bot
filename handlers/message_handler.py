@@ -6,6 +6,7 @@ from linebot.v3.messaging import (
     TextMessage,
     FlexMessage,
     FlexContainer,
+    ImageMessage,
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,18 @@ async def reply_message(line_api: AsyncMessagingApi, reply_token: str, response:
                 # [ROBUST FALLBACK] หาก Flex พังจากการประมวลผล จะทำการส่งข้อความธรรมดากลับไปทันทีเพื่อให้บอตไม่เงียบหาย
                 logger.error(f"LINE Flex validation failed! Falling back to text message. Error: {e}")
                 messages = [TextMessage(text=fallback_text[:2000], quick_reply=quick_reply)]
+        elif isinstance(response, dict) and response.get("type") == "image":
+            # ส่งรูปภาพอินโฟกราฟิก
+            original_url = response.get("original_content_url")
+            preview_url = response.get("preview_image_url", original_url)
+            messages = [
+                ImageMessage(
+                    original_content_url=original_url,
+                    preview_image_url=preview_url,
+                    quick_reply=quick_reply
+                )
+            ]
+            logger.info(f"Successfully compiled and sending Image Message: {original_url}")
         else:
             # ดึงข้อความดิบ
             if isinstance(response, dict) and response.get("type") == "text":

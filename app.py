@@ -111,6 +111,13 @@ async def lifespan(app: FastAPI):
         # สร้างตารางอัตโนมัติ (ปลอดภัยทั้ง SQLite และ Supabase)
         await conn.run_sync(Base.metadata.create_all)
         
+    # ตรวจเช็คและเตรียมความพร้อมสำหรับระบบเก็บรูปภาพอินโฟกราฟิกบน Supabase
+    from services.infographic_service import ensure_infographics_bucket_exists
+    try:
+        await ensure_infographics_bucket_exists()
+    except Exception as e:
+        logger.warning(f"Failed to initialize Supabase Storage bucket: {e}")
+
     logger.info("Database connection and tables initialized.")
     logger.info(
         f"DiaryBot started | db={DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL} | tz={BANGKOK}"

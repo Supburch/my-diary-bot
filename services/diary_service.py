@@ -334,6 +334,42 @@ def parse_note_summary_command(text: str) -> dict | None:
     return None
 
 
+def parse_infographic_command(text: str) -> dict | None:
+    """Parse คำสั่งสรุปภาพ เช่น 'สรุปภาพ 01', 'stats 2024', 'สรุปภาพ'
+    คืนค่า dict ที่มี period_type ('month'/'year'/'current_month') และ value (int | None)
+    หากไม่ใช่คำสั่งสรุปภาพให้คืน None
+    """
+    lower = text.strip().lower()
+    INFOGRAPHIC_PREFIXES = {"สรุปภาพ", "สรุปรูป", "stats", "stat", "ig", "ภาพสรุป", "รูปสรุป"}
+    matched_prefix = None
+    for prefix in INFOGRAPHIC_PREFIXES:
+        if lower.startswith(prefix):
+            matched_prefix = prefix
+            break
+    if matched_prefix is None:
+        return None
+
+    remainder = lower[len(matched_prefix):].strip()
+
+    # ไม่มีตัวระบุตามหลัง -> ดูสถิติเดือนปัจจุบัน
+    if not remainder:
+        return {"period_type": "current_month"}
+
+    # ตัวเลข 1–2 หลัก (01–12) -> ดูรายเดือน
+    month_match = re.fullmatch(r"0?(\d{1,2})", remainder)
+    if month_match:
+        month_val = int(month_match.group(1))
+        if 1 <= month_val <= 12:
+            return {"period_type": "month", "value": month_val}
+
+    # ตัวเลข 4 หลัก (เช่น 2024) -> ดูรายปี
+    year_match = re.fullmatch(r"(19\d{2}|20\d{2})", remainder)
+    if year_match:
+        return {"period_type": "year", "value": int(year_match.group(1))}
+
+    return None
+
+
 async def process_message(
     db: AsyncSession,
     user_id: str,
@@ -369,6 +405,119 @@ async def process_message(
         notes = await get_notes_by_period(db, user_id, start_date, end_date)
         from flex.flex_builders import build_note_summary_flex
         return build_note_summary_flex(period_label, notes, command_map)
+
+    # Infographic Summary (สรุปภาพสถิติ)
+    info_cmd = parse_infographic_command(text)
+    if info_cmd is not None:
+        import calendar
+        if info_cmd["period_type"] == "current_month":
+            start_date = date(today.year, today.month, 1)
+            end_date = today
+            period_label = f"สถิตินิสัยเดือน{THAI_MONTHS[today.month]} {today.year}"
+        elif info_cmd["period_type"] == "month":
+            m = info_cmd["value"]
+            y = today.year
+            start_date = date(y, m, 1)
+            last_day = calendar.monthrange(y, m)[1]
+            end_date = date(y, m, last_day)
+            period_label = f"สถิตินิสัยเดือน{THAI_MONTHS[m]} {y}"
+        else:  # year
+            y = info_cmd["value"]
+            start_date = date(y, 1, 1)
+            end_date = date(y, 12, 31)
+            period_label = f"สถิตินิสัยประจำปี {y}"
+
+        # 1. Query ข้อมูลบันทึกความสำเร็จสำหรับช่วงเวลา
+        stmt = select(DiaryEntry).where(
+            DiaryEntry.user_id == user_id,
+            DiaryEntry.entry_date >= start_date,
+            DiaryEntry.entry_date <= end_date,
+            DiaryEntry.done == True,
+            ~DiaryEntry.code.like("~~%")
+        )
+        result = await db.execute(stmt)
+        entries = list(result.scalars().all())
+
+        # 2. คำนวณ Streaks ของผู้ใช้งาน
+        current_streak, longest_streak = await get_user_streaks(db, user_id, today)
+
+        # 3. คำนวณค่าสถิติทั่วไป
+        total_checkmarks = len(entries)
+        total_days = (end_date - start_date).days + 1
+        unique_active_dates = {e.entry_date for e in entries}
+        active_days_count = len(unique_active_dates)
+        completion_rate = int((active_days_count / total_days) * 100) if total_days > 0 else 0
+
+        # หานิสัยยอดฮิตประจำตัว
+        from collections import Counter
+        habit_codes = [e.code for e in entries if e.code in command_map]
+        if habit_codes:
+            counter = Counter(habit_codes)
+            top_code, top_freq = counter.most_common(1)[0]
+            top_habit_name = command_map.get(top_code, top_code)
+        else:
+            top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
+
+        stats = {
+            "total_checkmarks": total_checkmarks,
+            "active_days": active_days_count,
+            "total_days": total_days,
+            "completion_rate": completion_rate,
+            "top_habit_code": top_code,
+            "top_habit_freq": top_freq,
+            "top_habit_name": top_habit_name,
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+        }
+
+        # 4. คำนวณสถิติรายข้อ (Habit Breakdown)
+        habit_breakdown = []
+        for code, name in command_map.items():
+            count = sum(1 for e in entries if e.code == code)
+            pct = int((count / total_days) * 100) if total_days > 0 else 0
+            habit_breakdown.append({
+                "code": code,
+                "name": name,
+                "count": count,
+                "pct": pct
+            })
+        # เรียงตามความถี่สูงสุด
+        habit_breakdown.sort(key=lambda x: x["count"], reverse=True)
+
+        # 5. สรุปความถี่รายวันสำหรับทำตาราง Contribution Calendar
+        contribution_data = Counter(e.entry_date for e in entries)
+
+        # 6. เรียกใช้ระบบทำอินโฟกราฟิกและอัปโหลดขึ้น Supabase Storage
+        from services.infographic_service import generate_and_upload_infographic
+        img_url = await generate_and_upload_infographic(
+            user_id=user_id,
+            period_label=period_label,
+            stats=stats,
+            habit_breakdown=habit_breakdown,
+            contribution_data=contribution_data,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        if img_url:
+            return {
+                "type": "image",
+                "original_content_url": img_url,
+                "preview_image_url": img_url
+            }
+        else:
+            # Fallback หากระบบจัดเก็บรูปภาพขัดข้อง ให้ทำรายงานเป็นข้อความตัวหนังสือให้อ่านแทน
+            fallback_text = (
+                f"❌ ไม่สามารถสร้างรูปภาพอินโฟกราฟิกได้ในขณะนี้ (อาจเนื่องจากไม่ได้ตั้งค่าคีย์ Supabase Storage ใน Render)\n\n"
+                f"📊 ข้อมูลสถิตินิสัย ({period_label}):\n"
+                f"• อัตราสำเร็จ: {completion_rate}%\n"
+                f"• บันทึก {active_days_count}/{total_days} วัน\n"
+                f"• จำนวนรวม: {total_checkmarks} ครั้ง\n"
+                f"• ต่อเนื่องปัจจุบัน: {current_streak} วัน 🔥\n"
+                f"• ดีที่สุด: {longest_streak} วัน 🏆\n"
+                f"• นิสัยยอดฮิต: {top_habit_name} ({top_freq} ครั้ง)\n"
+            )
+            return fallback_text
 
     # Weekly & Monthly Summary reports
     if lower in WEEKLY_CMDS:
