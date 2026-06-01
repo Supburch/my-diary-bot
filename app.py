@@ -141,13 +141,6 @@ async def ping():
     }
 
 
-@app.get("/debug/test-period")
-async def debug_test_period():
-    """[TEMP DEBUG] สั่งรัน Unit Test ของ Period Aggregation บนสภาพแวดล้อม Render จริง"""
-    from tests.test_period import run_period_tests
-    return await run_period_tests()
-
-
 @app.get("/health")
 async def health():
     """เช็คสุขภาพของระบบและฐานข้อมูล พร้อมส่งค่า uptime และเวลาเริ่มรันจริง"""
