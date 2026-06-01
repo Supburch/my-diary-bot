@@ -1,5 +1,3 @@
-import unittest
-import asyncio
 from datetime import date, timedelta
 from collections import Counter
 from sqlalchemy import select, Boolean, Date, Integer, String, Text
@@ -116,83 +114,77 @@ async def get_period_summary(
     }
 
 
-class TestPeriodSummaryAggregation(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        # Set up an in-memory SQLite database
-        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            
-        self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
-        self.db = self.Session()
+async def run_period_tests() -> dict:
+    """สั่งรันชุดทดสอบความถูกต้องของระบบสรุปรายงานข้ามช่วงเวลาแบบอะซิงโครนัสใน event loop เดียวกัน"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
         
-        self.user_id = "U_TEST_USER"
-        self.today = date(2026, 6, 1)
-        self.command_map = {
-            "99": "AI Coding",
-            "77": "Mindfulness",
-            "33": "PU @ 10",
-        }
-
-    async def asyncTearDown(self):
-        await self.db.close()
-        await self.engine.dispose()
-
-    async def test_empty_period(self):
-        # 1. ตรรกะกรณีไม่มีข้อมูลเลย
-        start = self.today - timedelta(days=6) # 7-day period
-        res = await get_period_summary(self.db, self.user_id, start, self.today, self.command_map)
+    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    db = Session()
+    
+    user_id = "U_TEST_USER"
+    today = date(2026, 6, 1)
+    command_map = {
+        "99": "AI Coding",
+        "77": "Mindfulness",
+        "33": "PU @ 10",
+    }
+    
+    output_lines = []
+    
+    try:
+        # Case 1: Empty period
+        start = today - timedelta(days=6)
+        res = await get_period_summary(db, user_id, start, today, command_map)
         
-        self.assertEqual(res["total_checkmarks"], 0)
-        self.assertEqual(res["active_days"], 0)
-        self.assertEqual(res["completion_rate"], 0)
-        self.assertIsNone(res["top_habit_code"])
-        self.assertEqual(res["top_habit_name"], "ไม่มี")
-        self.assertEqual(res["current_streak"], 0)
-        self.assertEqual(res["longest_streak"], 0)
-
-    async def test_standard_7_day_period(self):
-        # 2. ตรรกะกรณีบันทึกความสำเร็จทั่วไป
-        start = self.today - timedelta(days=6)
+        assert res["total_checkmarks"] == 0, f"Expected 0 checkmarks, got {res['total_checkmarks']}"
+        assert res["active_days"] == 0
+        assert res["completion_rate"] == 0
+        assert res["top_habit_code"] is None
+        assert res["top_habit_name"] == "ไม่มี"
+        assert res["current_streak"] == 0
+        assert res["longest_streak"] == 0
+        output_lines.append("test_empty_period ... PASS")
         
-        # Seed entries
-        # - today: 99
-        # - today - 1: 99, 77 (2 checkmarks)
-        # - today - 2: 77
-        # - today - 4: 33 (break at today - 3)
-        # - notes (~~reflection) -> should be ignored!
+        # Case 2: Standard 7-day period
         entries = [
-            DiaryEntry(user_id=self.user_id, entry_date=self.today, code="99", category="AI Coding", done=True),
-            DiaryEntry(user_id=self.user_id, entry_date=self.today - timedelta(days=1), code="99", category="AI Coding", done=True),
-            DiaryEntry(user_id=self.user_id, entry_date=self.today - timedelta(days=1), code="77", category="Mindfulness", done=True),
-            DiaryEntry(user_id=self.user_id, entry_date=self.today - timedelta(days=2), code="77", category="Mindfulness", done=True),
-            DiaryEntry(user_id=self.user_id, entry_date=self.today - timedelta(days=4), code="33", category="PU @ 10", done=True),
+            DiaryEntry(user_id=user_id, entry_date=today, code="99", category="AI Coding", done=True),
+            DiaryEntry(user_id=user_id, entry_date=today - timedelta(days=1), code="99", category="AI Coding", done=True),
+            DiaryEntry(user_id=user_id, entry_date=today - timedelta(days=1), code="77", category="Mindfulness", done=True),
+            DiaryEntry(user_id=user_id, entry_date=today - timedelta(days=2), code="77", category="Mindfulness", done=True),
+            DiaryEntry(user_id=user_id, entry_date=today - timedelta(days=4), code="33", category="PU @ 10", done=True),
             # Reflection note (~~note)
-            DiaryEntry(user_id=self.user_id, entry_date=self.today, code="~~note1", category="note", done=True, note="Ignore me"),
+            DiaryEntry(user_id=user_id, entry_date=today, code="~~note1", category="note", done=True, note="Ignore me"),
         ]
         
-        self.db.add_all(entries)
-        await self.db.commit()
+        db.add_all(entries)
+        await db.commit()
         
-        res = await get_period_summary(self.db, self.user_id, start, self.today, self.command_map)
+        res = await get_period_summary(db, user_id, start, today, command_map)
         
-        # Assertions
-        # Total checkmarks (excluding note): 99 (2), 77 (2), 33 (1) = 5
-        self.assertEqual(res["total_checkmarks"], 5)
-        # Active days: today, today-1, today-2, today-4 = 4 unique days
-        self.assertEqual(res["active_days"], 4)
-        self.assertEqual(res["total_days"], 7)
-        # Completion rate: (4 / 7) * 100 = 57%
-        self.assertEqual(res["completion_rate"], 57)
-        # Top Habit is a tie between 99 and 77 (2 each)
-        self.assertIn(res["top_habit_code"], ["99", "77"])
-        self.assertEqual(res["top_habit_freq"], 2)
-        # Streaks: active_days = [today, today-1, today-2, today-4]
-        # Current streak: anchor is today, goes back to today-2 -> 3 days
-        # Longest streak: 3 days
-        self.assertEqual(res["current_streak"], 3)
-        self.assertEqual(res["longest_streak"], 3)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert res["total_checkmarks"] == 5, f"Expected 5 checkmarks, got {res['total_checkmarks']}"
+        assert res["active_days"] == 4
+        assert res["total_days"] == 7
+        assert res["completion_rate"] == 57, f"Expected 57% completion rate, got {res['completion_rate']}"
+        assert res["top_habit_code"] in ["99", "77"]
+        assert res["top_habit_freq"] == 2
+        assert res["current_streak"] == 3, f"Expected current streak 3, got {res['current_streak']}"
+        assert res["longest_streak"] == 3
+        output_lines.append("test_standard_7_day_period ... PASS")
+        
+        return {
+            "status": "ok",
+            "message": "All period summary unit tests passed successfully!",
+            "output": "\n".join(output_lines)
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "status": "failed",
+            "message": f"Test failed with error: {str(e)}",
+            "traceback": traceback.format_exc()
+        }
+    finally:
+        await db.close()
+        await engine.dispose()
