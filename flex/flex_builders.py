@@ -236,7 +236,8 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
             "backgroundColor": "#34D399",
             "height": "6px",
             "cornerRadius": "md",
-            "width": f"{percentage}%"
+            "width": f"{percentage}%",
+            "contents": []
         })
     
     bubble = {
@@ -435,7 +436,8 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
             "backgroundColor": "#34D399",
             "height": "6px",
             "cornerRadius": "md",
-            "width": f"{percentage}%"
+            "width": f"{percentage}%",
+            "contents": []
         })
 
     notes = [e.note for e in entries if e.code.startswith("~~") and e.note]
