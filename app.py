@@ -141,6 +141,36 @@ async def ping():
     }
 
 
+@app.get("/debug/flex-summary")
+async def debug_flex_summary():
+    """[TEMP DEBUG] ทดสอบว่า Summary Flex JSON ผ่าน SDK validation หรือไม่"""
+    import json
+    from linebot.v3.messaging import FlexContainer
+    from flex.flex_builders import build_summary_flex
+    from services.diary_service import COMMAND_MAP, today_bkk
+
+    today = today_bkk()
+    # สร้าง Flex เหมือนกับที่ส่งจริง (ไม่มี entries)
+    result = build_summary_flex([], today, COMMAND_MAP)
+    bubble = result["contents"]
+
+    try:
+        container = FlexContainer.from_dict(bubble)
+        return {
+            "status": "ok",
+            "message": "Flex validation passed!",
+            "flex_type": type(container).__name__,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "bubble_json": json.dumps(bubble, ensure_ascii=False, indent=2)[:3000],
+        }
+
+
+
 @app.get("/health")
 async def health():
     """เช็คสุขภาพของระบบและฐานข้อมูล พร้อมส่งค่า uptime และเวลาเริ่มรันจริง"""
