@@ -19,7 +19,15 @@ SUMMARY_CMDS = {"summary", "sum", "สรุป", "วันนี้", "รว�
 HELP_CMDS = {"help", "รหัส", "code", "?", "เมนู"}
 WEEKLY_CMDS = {"weekly", "สัปดาห์", "week"}
 MONTHLY_CMDS = {"monthly", "เดือน", "month"}
+NOTE_SUMMARY_PREFIXES = {"สรุปโน้ต", "note", "โน้ต"}
 NOTE_MAX_LEN = 500
+
+# ชื่อเดือนภาษาไทย
+THAI_MONTHS = {
+    1: "มกราคม", 2: "กุมภาพันธ์", 3: "มีนาคม", 4: "เมษายน",
+    5: "พฤษภาคม", 6: "มิถุนายน", 7: "กรกฎาคม", 8: "สิงหาคม",
+    9: "กันยายน", 10: "ตุลาคม", 11: "พฤศจิกายน", 12: "ธันวาคม",
+}
 
 def today_bkk() -> date:
     return datetime.now(BANGKOK).date()
@@ -85,6 +93,23 @@ async def get_user_streaks(db: AsyncSession, user_id: str, today: date) -> tuple
     result = await db.execute(stmt)
     dates = list(result.scalars().all())
     return calculate_streak(dates, today)
+
+
+async def get_notes_by_period(
+    db: AsyncSession,
+    user_id: str,
+    start_date: date,
+    end_date: date,
+) -> list:
+    """ดึงโน้ตทั้งหมดของผู้ใช้ในช่วงเวลาที่กำหนด (entries ที่ code ขึ้นต้นด้วย ~~)"""
+    stmt = select(DiaryEntry).where(
+        DiaryEntry.user_id == user_id,
+        DiaryEntry.entry_date >= start_date,
+        DiaryEntry.entry_date <= end_date,
+        DiaryEntry.code.like("~~%")
+    ).order_by(DiaryEntry.entry_date.asc())
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def get_period_summary(
@@ -274,6 +299,41 @@ async def toggle_habit(
     )
 
 
+def parse_note_summary_command(text: str) -> dict | None:
+    """Parse คำสั่งสรุปโน้ต เช่น 'สรุปโน้ต 01', 'note 2024', 'สรุปโน้ต'
+    คืนค่า dict ที่มี period_type ('month'/'year') และ value (int)
+    หากไม่ใช่คำสั่งสรุปโน้ตให้คืน None
+    """
+    lower = text.strip().lower()
+    matched_prefix = None
+    for prefix in NOTE_SUMMARY_PREFIXES:
+        if lower.startswith(prefix):
+            matched_prefix = prefix
+            break
+    if matched_prefix is None:
+        return None
+
+    remainder = lower[len(matched_prefix):].strip()
+
+    # ไม่มีตัวเลขตามหลัง → ดูโน้ตเดือนปัจจุบัน
+    if not remainder:
+        return {"period_type": "current_month"}
+
+    # ตัวเลข 1–2 หลัก (01–12) → ดูรายเดือน
+    month_match = re.fullmatch(r"0?(\d{1,2})", remainder)
+    if month_match:
+        month_val = int(month_match.group(1))
+        if 1 <= month_val <= 12:
+            return {"period_type": "month", "value": month_val}
+
+    # ตัวเลข 4 หลัก (เช่น 2024) → ดูรายปี
+    year_match = re.fullmatch(r"(19\d{2}|20\d{2})", remainder)
+    if year_match:
+        return {"period_type": "year", "value": int(year_match.group(1))}
+
+    return None
+
+
 async def process_message(
     db: AsyncSession,
     user_id: str,
@@ -284,6 +344,31 @@ async def process_message(
     lower = text.lower()
     today = today_bkk()
     command_map = get_command_map(user_id)
+
+    # Note Summary (สรุปโน้ต)
+    note_cmd = parse_note_summary_command(text)
+    if note_cmd is not None:
+        import calendar
+        if note_cmd["period_type"] == "current_month":
+            start_date = date(today.year, today.month, 1)
+            end_date = today
+            period_label = f"📝 โน้ตเดือน{THAI_MONTHS[today.month]} {today.year}"
+        elif note_cmd["period_type"] == "month":
+            m = note_cmd["value"]
+            y = today.year
+            start_date = date(y, m, 1)
+            last_day = calendar.monthrange(y, m)[1]
+            end_date = date(y, m, last_day)
+            period_label = f"📝 โน้ตเดือน{THAI_MONTHS[m]} {y}"
+        else:  # year
+            y = note_cmd["value"]
+            start_date = date(y, 1, 1)
+            end_date = date(y, 12, 31)
+            period_label = f"📝 โน้ตปี {y}"
+
+        notes = await get_notes_by_period(db, user_id, start_date, end_date)
+        from flex.flex_builders import build_note_summary_flex
+        return build_note_summary_flex(period_label, notes, command_map)
 
     # Weekly & Monthly Summary reports
     if lower in WEEKLY_CMDS:

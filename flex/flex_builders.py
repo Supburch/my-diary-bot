@@ -840,3 +840,199 @@ def build_period_summary_flex(
         "fallback_text": fallback_text,
         "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
     }
+
+
+def build_note_summary_flex(
+    period_label: str,
+    notes: list,
+    command_map: dict[str, str]
+) -> dict:
+    """สร้าง Flex Message การ์ดรายงานสรุปโน้ตย้อนหลัง ดีไซน์ Zen Slate & Emerald
+    รองรับกรณีไม่มีโน้ต (empty state) และแสดงโน้ตจัดกลุ่มตามวันที่
+    """
+    from itertools import groupby
+
+    # Header
+    header = {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "xs",
+        "contents": [
+            {
+                "type": "text",
+                "text": "📝 NOTE ARCHIVE",
+                "color": "#34D399",
+                "weight": "bold",
+                "size": "xs",
+                "letterSpacing": "0.1em"
+            },
+            {
+                "type": "text",
+                "text": period_label,
+                "color": "#FFFFFF",
+                "weight": "bold",
+                "size": "sm",
+                "margin": "xs"
+            },
+            {
+                "type": "text",
+                "text": f"รวม {len(notes)} รายการ",
+                "color": "#94A3B8",
+                "size": "xxs",
+                "margin": "xs"
+            }
+        ]
+    }
+
+    # Body contents
+    body_contents = []
+
+    if not notes:
+        # Empty state
+        body_contents.append({
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1E293B",
+            "cornerRadius": "lg",
+            "paddingAll": "xl",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "📭",
+                    "size": "3xl",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": "ยังไม่มีโน้ตในช่วงนี้",
+                    "color": "#94A3B8",
+                    "size": "sm",
+                    "weight": "bold",
+                    "align": "center",
+                    "margin": "md"
+                },
+                {
+                    "type": "text",
+                    "text": "พิมพ์ ***ข้อความ เพื่อเริ่มบันทึก",
+                    "color": "#64748B",
+                    "size": "xxs",
+                    "align": "center",
+                    "margin": "sm"
+                }
+            ]
+        })
+    else:
+        # จัดกลุ่มโน้ตตามวันที่
+        sorted_notes = sorted(notes, key=lambda n: n.entry_date, reverse=True)
+        grouped = []
+        for dt, group in groupby(sorted_notes, key=lambda n: n.entry_date):
+            grouped.append((dt, list(group)))
+
+        # แสดงโน้ตสูงสุด 30 รายการ (ป้องกัน Flex overflow)
+        displayed_count = 0
+        max_display = 30
+
+        for dt, date_notes in grouped:
+            if displayed_count >= max_display:
+                break
+
+            # Date header row
+            body_contents.append({
+                "type": "box",
+                "layout": "horizontal",
+                "alignItems": "center",
+                "margin": "md" if body_contents else "none",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"📅 {dt.strftime('%d/%m/%Y')}",
+                        "color": "#34D399",
+                        "size": "xxs",
+                        "weight": "bold",
+                        "flex": 0
+                    },
+                    {
+                        "type": "separator",
+                        "color": "#1E293B",
+                        "margin": "sm"
+                    }
+                ]
+            })
+
+            for note_entry in date_notes:
+                if displayed_count >= max_display:
+                    break
+                note_text = note_entry.note or "(ไม่มีข้อความ)"
+                # ตัดข้อความยาวเกิน
+                if len(note_text) > 120:
+                    note_text = note_text[:117] + "..."
+
+                body_contents.append({
+                    "type": "box",
+                    "layout": "horizontal",
+                    "backgroundColor": "#1E293B",
+                    "cornerRadius": "md",
+                    "paddingAll": "md",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "💬",
+                            "size": "sm",
+                            "flex": 0,
+                            "gravity": "top"
+                        },
+                        {
+                            "type": "text",
+                            "text": note_text,
+                            "color": "#E2E8F0",
+                            "size": "xs",
+                            "wrap": True,
+                            "flex": 1,
+                            "margin": "sm"
+                        }
+                    ]
+                })
+                displayed_count += 1
+
+        # แจ้งเตือนหากมีโน้ตมากกว่าที่แสดง
+        if len(notes) > max_display:
+            body_contents.append({
+                "type": "text",
+                "text": f"... อีก {len(notes) - max_display} รายการ",
+                "color": "#64748B",
+                "size": "xxs",
+                "align": "center",
+                "margin": "md"
+            })
+
+    bubble = {
+        "type": "bubble",
+        "size": "giga",
+        "styles": {
+            "header": {"backgroundColor": "#0F172A"},
+            "body": {"backgroundColor": "#0F172A"}
+        },
+        "header": header,
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": body_contents
+        }
+    }
+
+    fallback_lines = [f"{period_label} ({len(notes)} รายการ)", "────────────────────────"]
+    for n in notes[:20]:
+        fallback_lines.append(f"📅 {n.entry_date.strftime('%d/%m/%Y')} — {n.note or '(ไม่มีข้อความ)'}")
+    if len(notes) > 20:
+        fallback_lines.append(f"... อีก {len(notes) - 20} รายการ")
+
+    return {
+        "type": "flex",
+        "alt_text": period_label,
+        "contents": bubble,
+        "fallback_text": "\n".join(fallback_lines),
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
+    }
