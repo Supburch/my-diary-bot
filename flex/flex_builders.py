@@ -186,7 +186,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                     "contents": [
                         {
                             "type": "text",
-                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note) : พิมพ์  ~ข้อความสั้นที่ต้องการบันทึก",
+                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note) : พิมพ์  *** ข้อความสั้นที่ต้องการบันทึก",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
@@ -208,7 +208,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
     fallback_lines = ["📋 Habit Tracker Codes\n"]
     for code, category in command_map.items():
         fallback_lines.append(f"{code} = {category}")
-    fallback_lines.append("\n~ข้อความ = บันทึก note\nรวม = สรุปวันนี้\nเมนู = ดูรายการคำสั่งและรหัส")
+    fallback_lines.append("\n***ข้อความ = บันทึก note\nรวม = สรุปวันนี้\nเมนู = ดูรายการคำสั่งและรหัส")
     
     return {
         "type": "flex",
@@ -602,5 +602,207 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         "alt_text": "📅 สรุปประวัติไดอารี่ประจำวัน",
         "contents": bubble,
         "fallback_text": "\n".join(fallback_lines),
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY)
+    }
+
+
+def build_period_summary_flex(
+    period_name: str,
+    start_date: date,
+    end_date: date,
+    stats: dict
+) -> dict:
+    """สร้าง Flex Message การ์ดรายงานสรุปสถิติประจำช่วงเวลา (Weekly/Monthly Summary) ดีไซน์หรู Zen Slate"""
+    completion_rate = stats["completion_rate"]
+    current_streak = stats["current_streak"]
+    longest_streak = stats["longest_streak"]
+    total_checkmarks = stats["total_checkmarks"]
+    top_habit_name = stats["top_habit_name"]
+    top_habit_freq = stats["top_habit_freq"]
+    
+    # Progress Bar ด้านใน
+    inner_bar = []
+    if completion_rate > 0:
+        inner_bar.append({
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#34D399",
+            "height": "6px",
+            "cornerRadius": "md",
+            "width": f"{completion_rate}%",
+            "contents": []
+        })
+
+    bubble = {
+        "type": "bubble",
+        "size": "giga",
+        "styles": {
+            "header": {"backgroundColor": "#0F172A"},
+            "body": {"backgroundColor": "#0F172A"}
+        },
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"📋 {period_name.upper()} REPORT",
+                    "color": "#34D399",
+                    "weight": "bold",
+                    "size": "xs",
+                    "letterSpacing": "0.1em"
+                },
+                {
+                    "type": "text",
+                    "text": f"{start_date.strftime('%d %b %Y')} - {end_date.strftime('%d %b %Y')}",
+                    "color": "#FFFFFF",
+                    "weight": "bold",
+                    "size": "sm",
+                    "margin": "xs"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                # 📈 Completion Rate Progress Bar
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "อัตราการรักษาวินัยช่วงสัปดาห์" if "WEEK" in period_name.upper() else "อัตราการรักษาวินัยช่วงเดือน",
+                                    "color": "#E2E8F0",
+                                    "size": "xs",
+                                    "weight": "bold"
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"{completion_rate}%",
+                                    "color": "#34D399",
+                                    "size": "xs",
+                                    "weight": "bold",
+                                    "align": "end"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#334155",
+                            "height": "6px",
+                            "cornerRadius": "md",
+                            "margin": "xs",
+                            "contents": inner_bar
+                        }
+                    ]
+                },
+                {
+                    "type": "separator",
+                    "color": "#1E293B",
+                    "margin": "md"
+                },
+                # 📊 Grid items
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "md",
+                    "contents": [
+                        # Row 1: Streaks
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "md",
+                            "contents": [
+                                {
+                                    "type": "box",
+                                    "layout": "vertical",
+                                    "backgroundColor": "#1E293B",
+                                    "cornerRadius": "md",
+                                    "paddingAll": "md",
+                                    "flex": 1,
+                                    "contents": [
+                                        {"type": "text", "text": "🔥 ทำต่อเนื่อง", "color": "#94A3B8", "size": "xxs", "weight": "bold"},
+                                        {"type": "text", "text": f"{current_streak} วัน", "color": "#F59E0B", "size": "md", "weight": "bold", "margin": "xs"}
+                                    ]
+                                },
+                                {
+                                    "type": "box",
+                                    "layout": "vertical",
+                                    "backgroundColor": "#1E293B",
+                                    "cornerRadius": "md",
+                                    "paddingAll": "md",
+                                    "flex": 1,
+                                    "contents": [
+                                        {"type": "text", "text": "🏆 สถิติสูงสุด", "color": "#94A3B8", "size": "xxs", "weight": "bold"},
+                                        {"type": "text", "text": f"{longest_streak} วัน", "color": "#FFFFFF", "size": "md", "weight": "bold", "margin": "xs"}
+                                    ]
+                                }
+                            ]
+                        },
+                        # Row 2: Total checkmarks & Top Habit
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "md",
+                            "contents": [
+                                {
+                                    "type": "box",
+                                    "layout": "vertical",
+                                    "backgroundColor": "#1E293B",
+                                    "cornerRadius": "md",
+                                    "paddingAll": "md",
+                                    "flex": 1,
+                                    "contents": [
+                                        {"type": "text", "text": "✅ บันทึกวินัยรวม", "color": "#94A3B8", "size": "xxs", "weight": "bold"},
+                                        {"type": "text", "text": f"{total_checkmarks} ครั้ง", "color": "#34D399", "size": "md", "weight": "bold", "margin": "xs"}
+                                    ]
+                                },
+                                {
+                                    "type": "box",
+                                    "layout": "vertical",
+                                    "backgroundColor": "#1E293B",
+                                    "cornerRadius": "md",
+                                    "paddingAll": "md",
+                                    "flex": 1,
+                                    "contents": [
+                                        {"type": "text", "text": "🥇 นิสัยยอดนิยม", "color": "#94A3B8", "size": "xxs", "weight": "bold"},
+                                        {"type": "text", "text": f"{top_habit_name}" + (f" ({top_habit_freq} ครั้ง)" if top_habit_freq > 0 else ""), "color": "#FFFFFF", "size": "xs", "weight": "bold", "margin": "xs", "wrap": True}
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    
+    fallback_text = (
+        f"📊 รายงานสรุปสถิติ {period_name}\n"
+        f"📅 ช่วงเวลา: {start_date} ถึง {end_date}\n"
+        f"────────────────────────\n"
+        f"📈 อัตราการรักษาวินัย: {completion_rate}%\n"
+        f"🔥 ทำต่อเนื่องปัจจุบัน: {current_streak} วัน\n"
+        f"🏆 สถิติสูงสุดตลอดกาล: {longest_streak} วัน\n"
+        f"✅ บันทึกวินัยรวม: {total_checkmarks} ครั้ง\n"
+        f"🥇 นิสัยยอดนิยม: {top_habit_name} ({top_habit_freq} ครั้ง)\n"
+        f"────────────────────────"
+    )
+    
+    return {
+        "type": "flex",
+        "alt_text": f"📊 รายงานสรุปสถิติ {period_name}",
+        "contents": bubble,
+        "fallback_text": fallback_text,
         "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY)
     }
