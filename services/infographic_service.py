@@ -40,26 +40,12 @@ CONTRIBUTION_COLORS = {
 }
 
 def ensure_fonts_downloaded():
-    """ตรวจสอบและดาวน์โหลดฟอนต์ Noto Sans Thai จาก Google Fonts อัตโนมัติหากไม่มีอยู่ในเครื่อง"""
-    if not os.path.exists(FONT_DIR):
-        os.makedirs(FONT_DIR)
-        logger.info(f"Created font directory: {FONT_DIR}")
-
-    urls = {
-        REGULAR_FONT_PATH: "https://github.com/google/fonts/raw/main/ofl/notosansthai/NotoSansThai-Regular.ttf",
-        BOLD_FONT_PATH: "https://github.com/google/fonts/raw/main/ofl/notosansthai/NotoSansThai-Bold.ttf"
-    }
-
-    for font_path, url in urls.items():
-        if not os.path.exists(font_path):
-            logger.info(f"Font not found at {font_path}. Downloading from Google Fonts...")
-            try:
-                # ใช้ urllib.request ดาวน์โหลดเพื่อความเสถียรและเร็ว
-                urllib.request.urlretrieve(url, font_path)
-                logger.info(f"Successfully downloaded font to {font_path}")
-            except Exception as e:
-                logger.error(f"Failed to download font {font_path}: {e}")
-                # ถ้าโหลดไม่สำเร็จจริงๆ จะไปโหลดฟอนต์ระบบตอนรัน แต่ส่วนใหญ่จะผ่าน
+    """ตรวจสอบว่าฟอนต์ Noto Sans Thai ได้ถูกติดตั้งและจัดเตรียมทางกายภาพในโฟลเดอร์ fonts/ แล้ว"""
+    if not os.path.exists(REGULAR_FONT_PATH) or not os.path.exists(BOLD_FONT_PATH):
+        logger.warning(
+            "Noto Sans Thai font files are missing from fonts/ directory! "
+            "Pillow will fallback to system default fonts."
+        )
 
 def draw_wrapped_text(draw, text, x, y, max_width, font, fill):
     """ฟังก์ชันช่วยตัดบรรทัดข้อความภาษาไทยเพื่อไม่ให้ล้นการ์ด"""
@@ -349,7 +335,7 @@ def render_infographic_sync(
     return img_byte_arr.getvalue()
 
 async def ensure_infographics_bucket_exists():
-    """ตรวจสอบความพร้อมของถังเก็บข้อมูล 'infographics' บน Supabase และทำการสร้างขึ้นใหม่แบบ Private ทันทีหากไม่มีในระบบ"""
+    """ตรวจสอบความพร้อมของถังเก็บข้อมูล 'infographics' บน Supabase หากไม่พบจะพยายามสร้างใหม่แบบเงียบๆ ไม่บล็อกตอนบูต"""
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     
@@ -376,7 +362,7 @@ async def ensure_infographics_bucket_exists():
                 return True
                 
             # 2. หากไม่พบ (404) ทำการสั่งสร้าง
-            logger.info("Supabase storage bucket 'infographics' not found. Creating a secure private bucket...")
+            logger.info("Supabase storage bucket 'infographics' not found. Attempting to create a secure private bucket...")
             create_body = {
                 "id": "infographics",
                 "name": "infographics",
@@ -384,21 +370,28 @@ async def ensure_infographics_bucket_exists():
                 "file_size_limit": 5242880, # 5MB limit
                 "allowed_mime_types": ["image/png"]
             }
-            create_res = await client.post(bucket_url, headers=headers, json=create_body, timeout=10.0)
-            
-            if create_res.status_code == 200:
-                logger.info("Successfully created Supabase Private storage bucket 'infographics'.")
-                return True
-            else:
-                logger.error(f"Failed to create Supabase storage bucket: {create_res.status_code} - {create_res.text}")
-                return False
+            try:
+                create_res = await client.post(bucket_url, headers=headers, json=create_body, timeout=10.0)
+                if create_res.status_code == 200:
+                    logger.info("Successfully created Supabase Private storage bucket 'infographics'.")
+                    return True
+                else:
+                    logger.warning(
+                        f"Could not create storage bucket (status {create_res.status_code}): {create_res.text}. "
+                        "Make sure your Supabase role has storage permission."
+                    )
+            except Exception as bucket_err:
+                logger.warning(f"Error attempting to create storage bucket: {bucket_err}")
+                
+            return False
         except Exception as e:
-            logger.exception(f"Exception verifying/creating Supabase 'infographics' bucket: {e}")
+            logger.warning(f"Exception verifying Supabase 'infographics' bucket: {e}")
             return False
 
 async def generate_and_upload_infographic(
     user_id: str,
     period_label: str,
+    period_key: str,
     stats: dict,
     habit_breakdown: list,
     contribution_data: dict,
@@ -435,11 +428,10 @@ async def generate_and_upload_infographic(
             logger.exception(f"Failed to render Pillow image: {e}")
             return None
 
-    # 2. ตั้งชื่อไฟล์แบบสุ่มสไตล์ UUID สองชั้น เพื่อป้องกันการแกะโครงสร้างเดา URL
-    import uuid
+    # 2. ตั้งชื่อไฟล์แบบคงที่ (Static) อิงตามช่วงเวลาเพื่อ overwrite รายงานของช่วงนั้นๆ ป้องกันไฟล์สะสมล้นคลาวด์
     import hashlib
     user_hash = hashlib.sha256(user_id.encode()).hexdigest()[:12]
-    filename = f"{user_hash}/{uuid.uuid4().hex[:16]}.png"
+    filename = f"{user_hash}/summary_{period_key}.png"
     
     upload_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{filename}"
     upload_headers = {
@@ -466,15 +458,15 @@ async def generate_and_upload_infographic(
             logger.exception(f"Exception during Supabase file upload: {e}")
             return None
             
-        # 4. ออกคีย์ความปลอดภัย Signed URL สื่อสารกลับแบบจำกัดอายุการเข้าถึง 15 นาที
+        # 4. ออกคีย์ความปลอดภัย Signed URL สื่อสารกลับแบบจำกัดอายุการเข้าถึง 24 ชั่วโมงเพื่อความเสถียรสูงสุด
         sign_url = f"{supabase_url}/storage/v1/object/sign/{bucket_name}/{filename}"
         sign_headers = {
             "Authorization": f"Bearer {supabase_key}",
             "Content-Type": "application/json"
         }
-        sign_body = {"expiresIn": 900} # 15 นาที
+        sign_body = {"expiresIn": 86400} # 24 ชั่วโมง
         
-        logger.info(f"Generating temporary Signed URL for file '{filename}' (expiresIn: 900s)...")
+        logger.info(f"Generating temporary Signed URL for file '{filename}' (expiresIn: 86400s)...")
         try:
             sign_res = await client.post(
                 sign_url,

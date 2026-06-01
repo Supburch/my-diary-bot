@@ -487,11 +487,20 @@ async def process_message(
         # 5. สรุปความถี่รายวันสำหรับทำตาราง Contribution Calendar
         contribution_data = Counter(e.entry_date for e in entries)
 
+        # กำหนดคีย์ระบุช่วงเวลาให้เป็นชื่อไฟล์แบบคงที่ (Static) เพื่อป้องกันไฟล์สะสมล้น Supabase
+        if info_cmd["period_type"] == "current_month":
+            period_key = f"monthly_{today.year}_{today.month:02d}"
+        elif info_cmd["period_type"] == "month":
+            period_key = f"monthly_{today.year}_{info_cmd['value']:02d}"
+        else:
+            period_key = f"yearly_{info_cmd['value']}"
+
         # 6. เรียกใช้ระบบทำอินโฟกราฟิกและอัปโหลดขึ้น Supabase Storage
         from services.infographic_service import generate_and_upload_infographic
         img_url = await generate_and_upload_infographic(
             user_id=user_id,
             period_label=period_label,
+            period_key=period_key,
             stats=stats,
             habit_breakdown=habit_breakdown,
             contribution_data=contribution_data,

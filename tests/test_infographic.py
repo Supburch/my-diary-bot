@@ -126,7 +126,7 @@ class TestInfographicGenerator(unittest.IsolatedAsyncioTestCase):
         # หากไม่มี env variables
         with patch.dict(os.environ, {}, clear=True):
             url = await generate_and_upload_infographic(
-                self.user_id, self.period_label, self.stats,
+                self.user_id, self.period_label, "monthly_2026_06", self.stats,
                 self.habit_breakdown, self.contribution_data,
                 self.start_date, self.end_date
             )
@@ -144,7 +144,7 @@ class TestInfographicGenerator(unittest.IsolatedAsyncioTestCase):
         
         with patch.dict(os.environ, {"SUPABASE_URL": "https://test.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "testkey"}):
             url = await generate_and_upload_infographic(
-                self.user_id, self.period_label, self.stats,
+                self.user_id, self.period_label, "monthly_2026_06", self.stats,
                 self.habit_breakdown, self.contribution_data,
                 self.start_date, self.end_date
             )
