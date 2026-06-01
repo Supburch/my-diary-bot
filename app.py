@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import logging
@@ -58,26 +59,28 @@ line_api: AsyncMessagingApi | None = None
 recent_events: dict[str, float] = {}
 DEDUP_TTL = 300       # วินาที
 DEDUP_MAX_SIZE = 1000 # จำกัดขนาดป้องกัน memory leak
+recent_events_lock = asyncio.Lock()
 
-def is_duplicate(body: bytes) -> bool:
-    digest = hashlib.sha256(body).hexdigest()
-    now = time.time()
+async def is_duplicate(body: bytes) -> bool:
+    async with recent_events_lock:
+        digest = hashlib.sha256(body).hexdigest()
+        now = time.time()
 
-    # ลบ entry ที่หมดอายุ
-    expired = [k for k, v in recent_events.items() if now - v > DEDUP_TTL]
-    for k in expired:
-        del recent_events[k]
+        # ลบ entry ที่หมดอายุ
+        expired = [k for k, v in recent_events.items() if now - v > DEDUP_TTL]
+        for k in expired:
+            del recent_events[k]
 
-    # ถ้า dict ใหญ่เกิน ลบ entry เก่าสุดออก
-    if len(recent_events) >= DEDUP_MAX_SIZE:
-        oldest = min(recent_events, key=recent_events.get)
-        del recent_events[oldest]
+        # ถ้า dict ใหญ่เกิน ลบ entry เก่าสุดออก
+        if len(recent_events) >= DEDUP_MAX_SIZE:
+            oldest = min(recent_events, key=recent_events.get)
+            del recent_events[oldest]
 
-    if digest in recent_events:
-        return True
+        if digest in recent_events:
+            return True
 
-    recent_events[digest] = now
-    return False
+        recent_events[digest] = now
+        return False
 
 # =========================================================
 # FastAPI App Lifespan
@@ -92,6 +95,15 @@ async def lifespan(app: FastAPI):
 
     # Startup
     async with engine.begin() as conn:
+        # [P0 STARTUP SELECT 1] Fail-Fast บูตระบบไม่ผ่านทันทีหาก DATABASE_URL มีปัญหา
+        from sqlalchemy import text
+        try:
+            await conn.execute(text("SELECT 1"))
+            logger.info("Startup database validation (SELECT 1) succeeded.")
+        except Exception as e:
+            logger.critical(f"FATAL: Startup database validation failed! Connection refused: {e}")
+            raise e
+
         # WAL mode: ช่วยลด lock contention ถ้าใช้ SQLite ในเครื่อง
         if DATABASE_URL.startswith("sqlite"):
             await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
@@ -167,7 +179,7 @@ async def health():
 async def callback(request: Request):
     body = await request.body()
 
-    if is_duplicate(body):
+    if await is_duplicate(body):
         logger.info("Duplicate webhook ignored")
         return {"status": "duplicate"}
 
