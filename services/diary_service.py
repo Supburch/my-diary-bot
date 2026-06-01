@@ -279,6 +279,6 @@ async def process_message(
     parsed = parse_message(text)
 
     if parsed["type"] in ("invalid", "note"):
-        return "❌ ไม่รู้จักคำสั่ง พิมพ์ help เพื่อดูรหัส"
+        return "❌ ไม่รู้จักคำสั่ง โปรดพิมพ์ help หรือ เมนู เพื่อออกคำสั่งต่อไป"
 
     return await toggle_habit(db, user_id, parsed)
