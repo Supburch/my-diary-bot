@@ -399,7 +399,8 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
             "layout": "horizontal",
             "alignItems": "center",
             "spacing": "md",
-            "paddingVertical": "xs",
+            "paddingTop": "xs",
+            "paddingBottom": "xs",
             "contents": [
                 {
                     "type": "text",
