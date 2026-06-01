@@ -147,6 +147,15 @@ def parse_message(text: str, command_map: dict[str, str]) -> dict:
     if not text:
         return {"type": "invalid"}
 
+    # ค้นหาและสกัดปี ค.ศ. (4 หลัก เช่น 1990-2099) เพื่อใช้บันทึกข้อมูลย้อนหลังแยกเป็นปี
+    year_match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
+    target_year = None
+    if year_match:
+        target_year = int(year_match.group(1))
+        # ลบปีออกจากข้อความเพื่อป้องกันการนำไป parse สับสนกับ count
+        text = text.replace(year_match.group(1), "").strip()
+        text = re.sub(r"\s+", " ", text)
+
     parts = text.split(maxsplit=2)
     code = parts[0]
 
@@ -180,6 +189,7 @@ def parse_message(text: str, command_map: dict[str, str]) -> dict:
         "category": category,
         "count": count,
         "note": note,
+        "year": target_year,
     }
 
 
@@ -191,10 +201,17 @@ async def toggle_habit(
 ) -> dict:
     """สั่งเปิด-ปิดรหัสความสำเร็จ พร้อมคำนวณจำนวนที่เสร็จสิ้นประจำวันเพื่อคืนค่า Flex Confirmation"""
     today = today_bkk()
+    entry_date = today
+    if parsed.get("year"):
+        try:
+            entry_date = date(parsed["year"], today.month, today.day)
+        except ValueError:
+            # รับมือกรณีวันที่ 29 ก.พ. ในปีที่ไม่ใช่อธิกสุรทิน
+            entry_date = date(parsed["year"], today.month, 28)
 
     stmt = select(DiaryEntry).where(
         DiaryEntry.user_id == user_id,
-        DiaryEntry.entry_date == today,
+        DiaryEntry.entry_date == entry_date,
         DiaryEntry.code == parsed["code"],
     )
 
@@ -208,18 +225,18 @@ async def toggle_habit(
             existing.count = parsed["count"]
             existing.note = parsed["note"]
             await db.commit()
-            logger.info(f"Updated habit {parsed['code']} with count={parsed['count']} note={parsed['note']} for user {user_id}")
+            logger.info(f"Updated habit {parsed['code']} with count={parsed['count']} note={parsed['note']} for user {user_id} on {entry_date}")
         else:
             # ถ้าส่งมาแค่รหัสเพียวๆ ถึงจะเรียกว่าเป็นการสั่ง Toggle (ลบออก)
             await db.delete(existing)
             await db.commit()
             is_done = False
-            logger.info(f"Toggled OFF habit {parsed['code']} for user {user_id}")
+            logger.info(f"Toggled OFF habit {parsed['code']} for user {user_id} on {entry_date}")
     else:
         # หากยังไม่มี ให้สร้างใหม่
         entry = DiaryEntry(
             user_id=user_id,
-            entry_date=today,
+            entry_date=entry_date,
             code=parsed["code"],
             category=parsed["category"],
             done=True,
@@ -228,12 +245,12 @@ async def toggle_habit(
         )
         db.add(entry)
         await db.commit()
-        logger.info(f"Toggled ON habit {parsed['code']} for user {user_id}")
+        logger.info(f"Toggled ON habit {parsed['code']} for user {user_id} on {entry_date}")
 
-    # ดึงข้อมูลของวันนี้ทั้งหมดเพื่อสรุปความก้าวหน้าระหว่างวัน
+    # ดึงข้อมูลของวันนั้นๆ ทั้งหมดเพื่อสรุปความก้าวหน้าระหว่างวัน
     summary_stmt = select(DiaryEntry).where(
         DiaryEntry.user_id == user_id,
-        DiaryEntry.entry_date == today,
+        DiaryEntry.entry_date == entry_date,
     )
     summary_res = await db.execute(summary_stmt)
     entries = list(summary_res.scalars().all())
@@ -242,7 +259,7 @@ async def toggle_habit(
     done_count = sum(1 for e in entries if not e.code.startswith("~~") and e.done)
     total_habits = len(command_map)
 
-    # คำนวณ Streak ปัจจุบัน
+    # คำนวณ Streak ปัจจุบัน (ยึดตามวันจริงของ today)
     current_streak, _ = await get_user_streaks(db, user_id, today)
 
     from flex.flex_builders import build_toggle_flex
@@ -311,6 +328,19 @@ async def process_message(
     # Free note (Text)
     if text.startswith("***"):
         note = text[3:].strip()
+        # ค้นหาและสกัดปี ค.ศ. (4 หลัก เช่น 1990-2099) เพื่อใช้บันทึกโน้ตย้อนหลัง
+        year_match = re.search(r"\b(19\d{2}|20\d{2})\b", note)
+        note_date = today
+        if year_match:
+            parsed_year = int(year_match.group(1))
+            try:
+                note_date = date(parsed_year, today.month, today.day)
+            except ValueError:
+                # รับมือกรณีปีอธิกสุรทิน
+                note_date = date(parsed_year, today.month, 28)
+            # ลบปีออกจากโน้ตเพื่อความสะอาด
+            note = note.replace(year_match.group(1), "").strip()
+            note = re.sub(r"\s+", " ", note)
 
         if not note:
             return "❌ note ว่างเปล่า"
@@ -320,7 +350,7 @@ async def process_message(
 
         entry = DiaryEntry(
             user_id=user_id,
-            entry_date=today,
+            entry_date=note_date,
             code=f"~~{uuid.uuid4().hex[:8]}",
             category="note",
             done=True,
@@ -329,7 +359,7 @@ async def process_message(
 
         db.add(entry)
         await db.commit()
-        return f"📝 {note}"
+        return f"📝 {note} (ปี {note_date.year})" if note_date.year != today.year else f"📝 {note}"
 
     # Habit toggle (Flex Confirmation)
     parsed = parse_message(text, command_map)
