@@ -218,7 +218,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
         "quick_reply": build_quick_reply(QuickReplyContext.HELP)
     }
 
-def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int) -> dict:
+def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int, current_streak: int = 0) -> dict:
     """สร้าง Flex Message การ์ดตอบรับด่วนเวลาผู้ใช้สั่ง Toggle"""
     percentage = int((done_count / total_habits) * 100)
     icon = HABIT_ICONS.get(code, "▪")
@@ -303,7 +303,7 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": f"วันนี้สำเร็จแล้ว {done_count}/{total_habits}",
+                                    "text": f"สำเร็จแล้ว {done_count}/{total_habits}" + (f" | 🔥 ต่อเนื่อง {current_streak} วัน" if current_streak > 0 else ""),
                                     "color": "#94A3B8",
                                     "size": "xs"
                                 },
@@ -342,7 +342,7 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
         "quick_reply": build_quick_reply(QuickReplyContext.TOGGLE)
     }
 
-def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map: dict[str, str]) -> dict:
+def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map: dict[str, str], current_streak: int = 0, best_streak: int = 0) -> dict:
     """สร้าง Flex Message หน้าสรุปคะแนนประจำวันพร้อมเกจความคืบหน้าและกล่อง Reflection"""
     habit_map = {e.code: e for e in entries if not e.code.startswith("~~")}
     
@@ -353,7 +353,7 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
     symbol = "●" if target_date.day % 2 == 0 else "■"
     outline = "○" if symbol == "●" else "□"
     fallback_lines = [
-        f"📅 {target_date}",
+        f"📅 {target_date}" + (f" | 🔥 ทำต่อเนื่อง {current_streak} วัน (สูงสุด {best_streak} วัน)" if current_streak > 0 else ""),
         "─" * 24
     ]
     
@@ -557,19 +557,36 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
             "contents": [
                 {
                     "type": "text",
-                    "text": f"📅 DAILY DIARY",
+                    "text": "📅 DAILY DIARY",
                     "color": "#94A3B8",
                     "weight": "bold",
                     "size": "xs",
                     "letterSpacing": "0.1em"
                 },
                 {
-                    "type": "text",
-                    "text": target_date.strftime("%A, %d %B %Y"),
-                    "color": "#FFFFFF",
-                    "weight": "bold",
-                    "size": "sm",
-                    "margin": "xs"
+                    "type": "box",
+                    "layout": "horizontal",
+                    "alignItems": "center",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": target_date.strftime("%A, %d %B %Y"),
+                            "color": "#FFFFFF",
+                            "weight": "bold",
+                            "size": "sm",
+                            "flex": 1
+                        },
+                        {
+                            "type": "text",
+                            "text": f"🔥 {current_streak} วัน (สูงสุด {best_streak})" if current_streak > 0 else f"🔥 {current_streak} วัน",
+                            "color": "#F59E0B",
+                            "weight": "bold",
+                            "size": "xs",
+                            "align": "end",
+                            "flex": 0
+                        }
+                    ]
                 }
             ]
         },

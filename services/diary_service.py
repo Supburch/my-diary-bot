@@ -1,7 +1,7 @@
 import re
 import uuid
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,68 @@ NOTE_MAX_LEN = 500
 
 def today_bkk() -> date:
     return datetime.now(BANGKOK).date()
+
+
+def calculate_streak(active_dates: list[date], today: date) -> tuple[int, int]:
+    """คำนวณหาสถิติการทำต่อเนื่อง (Current Streak) และประวัติทำต่อเนื่องยาวนานที่สุด (Best Streak)
+    จากลิสต์ของวันที่บันทึกความสำเร็จ (เฉพาะ Habit ไม่รวม Note)
+    """
+    if not active_dates:
+        return 0, 0
+        
+    # กรองเอาตัวซ้ำออกและเรียงลำดับจากเก่าไปใหม่
+    unique_dates = sorted(list(set(active_dates)))
+    
+    # 1. คำนวณ Best Streak (ทำต่อเนื่องยาวนานที่สุด)
+    best_streak = 0
+    temp_streak = 0
+    prev_date = None
+    
+    for d in unique_dates:
+        if prev_date is None:
+            temp_streak = 1
+        else:
+            diff = (d - prev_date).days
+            if diff == 1:
+                temp_streak += 1
+            elif diff > 1:
+                if temp_streak > best_streak:
+                    best_streak = temp_streak
+                temp_streak = 1
+        prev_date = d
+        
+    if temp_streak > best_streak:
+        best_streak = temp_streak
+        
+    # 2. คำนวณ Current Streak (ทำต่อเนื่องปัจจุบัน)
+    active_set = set(unique_dates)
+    anchor = None
+    
+    if today in active_set:
+        anchor = today
+    elif (today - timedelta(days=1)) in active_set:
+        anchor = today - timedelta(days=1)
+        
+    current_streak = 0
+    if anchor is not None:
+        cursor = anchor
+        while cursor in active_set:
+            current_streak += 1
+            cursor -= timedelta(days=1)
+            
+    return current_streak, best_streak
+
+
+async def get_user_streaks(db: AsyncSession, user_id: str, today: date) -> tuple[int, int]:
+    """ดึงข้อมูลประวัติวันที่สำเร็จของ user_id เพื่อส่งกลับผลลัพธ์คำนวณ Streak (เฉพาะ Habit ไม่รวม Note)"""
+    stmt = select(DiaryEntry.entry_date).where(
+        DiaryEntry.user_id == user_id,
+        DiaryEntry.done == True,
+        ~DiaryEntry.code.like("~~%")
+    )
+    result = await db.execute(stmt)
+    dates = list(result.scalars().all())
+    return calculate_streak(dates, today)
 
 
 def get_symbol(target_date: date) -> str:
@@ -139,8 +201,18 @@ async def toggle_habit(
     done_count = sum(1 for e in entries if not e.code.startswith("~~") and e.done)
     total_habits = len(COMMAND_MAP)
 
+    # คำนวณ Streak ปัจจุบัน
+    current_streak, _ = await get_user_streaks(db, user_id, today)
+
     from flex.flex_builders import build_toggle_flex
-    return build_toggle_flex(parsed["code"], parsed["category"], is_done, done_count, total_habits)
+    return build_toggle_flex(
+        parsed["code"],
+        parsed["category"],
+        is_done,
+        done_count,
+        total_habits,
+        current_streak=current_streak,
+    )
 
 
 async def process_message(
@@ -167,8 +239,18 @@ async def process_message(
             )
         )
         entries = list(result.scalars().all())
+        
+        # คำนวณความต่อเนื่อง (Streak)
+        current_streak, best_streak = await get_user_streaks(db, user_id, today)
+        
         from flex.flex_builders import build_summary_flex
-        return build_summary_flex(entries, today, COMMAND_MAP)
+        return build_summary_flex(
+            entries,
+            today,
+            COMMAND_MAP,
+            current_streak=current_streak,
+            best_streak=best_streak
+        )
 
     # Free note (Text)
     if text.startswith("~"):
