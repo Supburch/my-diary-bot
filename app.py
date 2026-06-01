@@ -148,10 +148,16 @@ async def debug_flex_summary():
     from linebot.v3.messaging import FlexContainer
     from flex.flex_builders import build_summary_flex
     from services.diary_service import COMMAND_MAP, today_bkk
+    from db.models import DiaryEntry
 
     today = today_bkk()
-    # สร้าง Flex เหมือนกับที่ส่งจริง (ไม่มี entries)
-    result = build_summary_flex([], today, COMMAND_MAP)
+    # สร้าง Flex เหมือนกับที่ส่งจริง โดยมี mock entries ที่ done = True เพื่อทดสอบ percentage > 0
+    mock_entries = [
+        DiaryEntry(user_id="U123456", entry_date=today, code="99", done=True),
+        DiaryEntry(user_id="U123456", entry_date=today, code="77", done=True),
+        DiaryEntry(user_id="U123456", entry_date=today, code="~~reflection1", done=True, note="Test note"),
+    ]
+    result = build_summary_flex(mock_entries, today, COMMAND_MAP)
     bubble = result["contents"]
 
     try:
@@ -160,13 +166,14 @@ async def debug_flex_summary():
             "status": "ok",
             "message": "Flex validation passed!",
             "flex_type": type(container).__name__,
+            "done_count": len([e for e in mock_entries if e.done and not e.code.startswith("~~")]),
         }
     except Exception as e:
         return {
             "status": "error",
             "error_type": type(e).__name__,
             "error_message": str(e),
-            "bubble_json": json.dumps(bubble, ensure_ascii=False, indent=2)[:3000],
+            "bubble_json": json.loads(json.dumps(bubble, ensure_ascii=False)),
         }
 
 
