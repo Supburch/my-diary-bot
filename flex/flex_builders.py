@@ -19,7 +19,7 @@ def build_quick_reply(context: QuickReplyContext) -> QuickReply | None:
     if context == QuickReplyContext.TOGGLE:
         # บันทึกความสำเร็จเรียบร้อย -> เน้นให้ดูสรุปผลลัพธ์เป็นอันดับหนึ่ง ตามด้วย Habit ที่ใช้บ่อยมาก (จัดลำดับไม่ให้ล้น scroll blindspot)
         actions = [
-            ("📊 สรุปวันนี้", "sum"),
+            ("📊 สรุปวันนี้", "รวม"),
             ("💻 99 AI Coding", "99"),
             ("🧘 77 Mindfulness", "77"),
             ("📖 11 5min Read", "11"),
@@ -34,7 +34,7 @@ def build_quick_reply(context: QuickReplyContext) -> QuickReply | None:
             ("🏃 44 Squad @ 35", "44"),
             ("🚶 55 Walk 2Km", "55"),
             ("💪 33 PU @ 10", "33"),
-            ("❓ ช่วยเหลือ", "help"),
+            ("❓ เมนู", "เมนู"),
         ]
     elif context == QuickReplyContext.HELP:
         # ผู้ใช้กำลังศึกษาคำสั่งคีย์ -> แสดงรหัส Habit ครบถ้วนเป็นระเบียบตามลำดับ
@@ -49,7 +49,7 @@ def build_quick_reply(context: QuickReplyContext) -> QuickReply | None:
             ("🧘 77 Mindfulness", "77"),
             ("🏡 88 Farm/House", "88"),
             ("💻 99 AI Coding", "99"),
-            ("📊 สรุปวันนี้", "sum"),
+            ("📊 สรุปวันนี้", "รวม"),
         ]
     else:
         return None
@@ -193,7 +193,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                         },
                         {
                             "type": "text",
-                            "text": "📊 วิธีดูสรุปประวัติ: พิมพ์ sum หรือวันนี้",
+                            "text": "📊 วิธีดูสรุปประวัติ: พิมพ์ รวม หรือวันนี้",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
@@ -208,7 +208,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
     fallback_lines = ["📋 Habit Tracker Codes\n"]
     for code, category in command_map.items():
         fallback_lines.append(f"{code} = {category}")
-    fallback_lines.append("\n~ข้อความ = บันทึก note\nsum = สรุปวันนี้")
+    fallback_lines.append("\n~ข้อความ = บันทึก note\nรวม = สรุปวันนี้\nเมนู = ดูรายการคำสั่งและรหัส")
     
     return {
         "type": "flex",

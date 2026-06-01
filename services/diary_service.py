@@ -27,8 +27,8 @@ COMMAND_MAP: dict[str, str] = {
     "99": "AI Coding",
 }
 
-SUMMARY_CMDS = {"summary", "sum", "สรุป", "วันนี้"}
-HELP_CMDS = {"help", "รหัส", "code", "?"}
+SUMMARY_CMDS = {"summary", "sum", "สรุป", "วันนี้", "รวม"}
+HELP_CMDS = {"help", "รหัส", "code", "?", "เมนู"}
 NOTE_MAX_LEN = 500
 
 def today_bkk() -> date:
