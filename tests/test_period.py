@@ -173,6 +173,25 @@ async def run_period_tests() -> dict:
         assert res["longest_streak"] == 3
         output_lines.append("test_standard_7_day_period ... PASS")
         
+        # Case 3: Leap Year (2024-02-29)
+        leap_start = date(2024, 2, 28)
+        leap_end = date(2024, 3, 1)
+        leap_entries = [
+            DiaryEntry(user_id=user_id, entry_date=date(2024, 2, 28), code="99", category="AI Coding", done=True),
+            DiaryEntry(user_id=user_id, entry_date=date(2024, 2, 29), code="99", category="AI Coding", done=True), # Leap Day!
+            DiaryEntry(user_id=user_id, entry_date=date(2024, 3, 1), code="99", category="AI Coding", done=True),
+        ]
+        db.add_all(leap_entries)
+        await db.commit()
+        
+        leap_res = await get_period_summary(db, user_id, leap_start, leap_end, command_map)
+        assert leap_res["total_checkmarks"] == 3, f"Expected 3 checkmarks, got {leap_res['total_checkmarks']}"
+        assert leap_res["active_days"] == 3
+        assert leap_res["total_days"] == 3
+        assert leap_res["completion_rate"] == 100
+        assert leap_res["current_streak"] == 3
+        output_lines.append("test_leap_year_period ... PASS")
+        
         return {
             "status": "ok",
             "message": "All period summary unit tests passed successfully!",

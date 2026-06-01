@@ -117,6 +117,32 @@ class TestStreakCalculation(unittest.TestCase):
         self.assertEqual(current, 2)
         self.assertEqual(best, 2)
 
+    def test_case_9_historical_backdate_longest_streak(self):
+        # Case 9: มีสถิติยาวในอดีต (2024-01-01 ถึง 01-03) และพึ่งบันทึกวันนี้ (2026-06-01)
+        # Expected: Current = 1, Longest = 3
+        d_past1 = date(2024, 1, 1)
+        d_past2 = date(2024, 1, 2)
+        d_past3 = date(2024, 1, 3)
+        active_dates = [d_past1, d_past2, d_past3, self.today]
+        current, best = calculate_streak(active_dates, self.today)
+        self.assertEqual(current, 1)
+        self.assertEqual(best, 3)
+
+    def test_case_10_historical_backdate_current_streak_undisturbed(self):
+        # Case 10: บันทึกของปัจจุบันไว้ต่อเนื่อง 2 วัน (2026-05-30, 2026-05-31)
+        # และมีประวัติย้อนหลังในอดีต (2024-01-01 ถึง 01-03)
+        # Expected: Current = 2 (นับต่อเนื่อง 5-30 ถึง 5-31 โดย anchor ที่ 5-31), Longest = 3
+        d_past1 = date(2024, 1, 1)
+        d_past2 = date(2024, 1, 2)
+        d_past3 = date(2024, 1, 3)
+        d_curr1 = date(2026, 5, 30)
+        d_curr2 = date(2026, 5, 31)
+        active_dates = [d_past1, d_past2, d_past3, d_curr1, d_curr2]
+        # จำลองวันนี้เป็นวันที่ 2026-06-01 (รอยต่อ 1 วันจากวันที่บันทึก 05-31)
+        current, best = calculate_streak(active_dates, self.today)
+        self.assertEqual(current, 2)
+        self.assertEqual(best, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
