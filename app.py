@@ -141,6 +141,30 @@ async def ping():
     }
 
 
+@app.get("/debug/test-period")
+async def debug_test_period():
+    """[TEMP DEBUG] สั่งรัน Unit Test ของ Period Aggregation บนสภาพแวดล้อม Render จริง"""
+    import unittest
+    import io
+    from tests.test_period import TestPeriodSummaryAggregation
+    
+    suite = unittest.TestLoader().loadTestsFromTestCase(TestPeriodSummaryAggregation)
+    stream = io.StringIO()
+    runner = unittest.TextTestRunner(stream=stream, verbosity=2)
+    result = runner.run(suite)
+    
+    stream.seek(0)
+    output = stream.read()
+    
+    return {
+        "status": "ok" if result.wasSuccessful() else "failed",
+        "tests_run": result.testsRun,
+        "errors": len(result.errors),
+        "failures": len(result.failures),
+        "output": output
+    }
+
+
 @app.get("/health")
 async def health():
     """เช็คสุขภาพของระบบและฐานข้อมูล พร้อมส่งค่า uptime และเวลาเริ่มรันจริง"""
