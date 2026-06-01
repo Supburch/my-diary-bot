@@ -191,7 +191,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                 },
                 {
                     "type": "text",
-                    "text": "ส่งรหัสตัวเลข 2 หลักเพื่อ Toggle ความสำเร็จประจำวัน",
+                    "text": "คีย์รหัสตัวเลข 2 หลักเพื่อลงรายการประจำวัน",
                     "color": "#94A3B8",
                     "size": "xs"
                 }
@@ -219,14 +219,14 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                     "contents": [
                         {
                             "type": "text",
-                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note) : พิมพ์  *** ข้อความสั้นที่ต้องการบันทึก",
+                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note) : พิมพ์  ***ตามด้วยข้อความสั้นๆที่ต้องการบันทึก",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
                         },
                         {
                             "type": "text",
-                            "text": "📊 วิธีดูสรุปประวัติ: พิมพ์ รวม หรือ วันนี้",
+                            "text": "📊 วิธีดูสรุปประวัติรวมที่ผ่านมา: พิมพ์คำว่า รวม หรือคำว่า สรุป",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
