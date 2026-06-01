@@ -1,8 +1,67 @@
 import logging
 from datetime import date
+from enum import Enum
 from db.models import DiaryEntry
+from linebot.v3.messaging import QuickReply, QuickReplyItem, MessageAction
 
 logger = logging.getLogger(__name__)
+
+# Enum สำหรับจำแนกหมวดหมู่สถานะเพื่อจัดทำปุ่มตอบกลับแบบ Context-Aware
+class QuickReplyContext(Enum):
+    HELP = "help"
+    SUMMARY = "summary"
+    TOGGLE = "toggle"
+
+def build_quick_reply(context: QuickReplyContext) -> QuickReply | None:
+    """สร้าง QuickReply ออบเจกต์ตามแต่ละสถานการณ์การจิ้มของผู้ใช้งานเพื่อเพิ่มความสะดวกสบาย"""
+    items = []
+    
+    if context == QuickReplyContext.TOGGLE:
+        # บันทึกความสำเร็จเรียบร้อย -> เน้นให้ดูสรุปผลลัพธ์เป็นอันดับหนึ่ง ตามด้วย Habit ที่ใช้บ่อยมาก (จัดลำดับไม่ให้ล้น scroll blindspot)
+        actions = [
+            ("📊 สรุปวันนี้", "sum"),
+            ("💻 99 AI Coding", "99"),
+            ("🧘 77 Mindfulness", "77"),
+            ("📖 11 5min Read", "11"),
+            ("💪 33 PU @ 10", "33"),
+        ]
+    elif context == QuickReplyContext.SUMMARY:
+        # ผู้ใช้กำลังดู Dashboard สรุปความก้าวหน้า -> เน้นปุ่ม Habit ยอดนิยมเพื่อดึงดูดใจให้จิ้มบันทึกรายการอื่นๆ ต่อ
+        actions = [
+            ("💻 99 AI Coding", "99"),
+            ("📈 66 Trade/Invest", "66"),
+            ("🧘 77 Mindfulness", "77"),
+            ("🏃 44 Squad @ 35", "44"),
+            ("🚶 55 Walk 2Km", "55"),
+            ("💪 33 PU @ 10", "33"),
+            ("❓ ช่วยเหลือ", "help"),
+        ]
+    elif context == QuickReplyContext.HELP:
+        # ผู้ใช้กำลังศึกษาคำสั่งคีย์ -> แสดงรหัส Habit ครบถ้วนเป็นระเบียบตามลำดับ
+        actions = [
+            ("💬 00 News/Talk", "00"),
+            ("📖 11 5min Read", "11"),
+            ("🎥 22 Documentary", "22"),
+            ("💪 33 PU @ 10", "33"),
+            ("🏃 44 Squad @ 35", "44"),
+            ("🚶 55 Walk 2Km", "55"),
+            ("📈 66 Trade/Invest", "66"),
+            ("🧘 77 Mindfulness", "77"),
+            ("🏡 88 Farm/House", "88"),
+            ("💻 99 AI Coding", "99"),
+            ("📊 สรุปวันนี้", "sum"),
+        ]
+    else:
+        return None
+
+    for label, text in actions:
+        items.append(
+            QuickReplyItem(
+                action=MessageAction(label=label, text=text)
+            )
+        )
+        
+    return QuickReply(items=items)
 
 # ไอคอน Emojis สวยๆ ประจำรหัส Habit
 HABIT_ICONS = {
@@ -155,7 +214,8 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
         "type": "flex",
         "alt_text": "📋 รายการรหัส Habit",
         "contents": bubble,
-        "fallback_text": "\n".join(fallback_lines)
+        "fallback_text": "\n".join(fallback_lines),
+        "quick_reply": build_quick_reply(QuickReplyContext.HELP)
     }
 
 def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int) -> dict:
@@ -277,7 +337,8 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
         "type": "flex",
         "alt_text": "📝 อัปเดตความสำเร็จ Habit",
         "contents": bubble,
-        "fallback_text": fallback_text
+        "fallback_text": fallback_text,
+        "quick_reply": build_quick_reply(QuickReplyContext.TOGGLE)
     }
 
 def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map: dict[str, str]) -> dict:
@@ -520,5 +581,6 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         "type": "flex",
         "alt_text": "📅 สรุปประวัติไดอารี่ประจำวัน",
         "contents": bubble,
-        "fallback_text": "\n".join(fallback_lines)
+        "fallback_text": "\n".join(fallback_lines),
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY)
     }

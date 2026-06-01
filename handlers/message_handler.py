@@ -18,6 +18,11 @@ async def reply_message(line_api: AsyncMessagingApi, reply_token: str, response:
     พร้อมมีระบบ JSON Validation และ Fallback เพื่อความปลอดภัยสูงสุดในโปรดักชัน
     """
     try:
+        # สกัดปุ่ม Quick Reply (ถ้ามีระบุใน response)
+        quick_reply = None
+        if isinstance(response, dict):
+            quick_reply = response.get("quick_reply")
+
         if isinstance(response, dict) and response.get("type") == "flex":
             alt_text = response.get("alt_text", "Habit Tracker Update")
             bubble_contents = response.get("contents")
@@ -26,12 +31,12 @@ async def reply_message(line_api: AsyncMessagingApi, reply_token: str, response:
             try:
                 # [CRITICAL CHECK] ทำการทดสอบคอมไพล์โครงสร้าง Flex Message
                 container = FlexContainer.from_dict(bubble_contents)
-                messages = [FlexMessage(alt_text=alt_text, contents=container)]
-                logger.info(f"Successfully compiled and sending Flex Message: {alt_text}")
+                messages = [FlexMessage(alt_text=alt_text, contents=container, quick_reply=quick_reply)]
+                logger.info(f"Successfully compiled and sending Flex Message with QuickReply: {alt_text}")
             except Exception as e:
                 # [ROBUST FALLBACK] หาก Flex พังจากการประมวลผล จะทำการส่งข้อความธรรมดากลับไปทันทีเพื่อให้บอตไม่เงียบหาย
                 logger.error(f"LINE Flex validation failed! Falling back to text message. Error: {e}")
-                messages = [TextMessage(text=fallback_text[:2000])]
+                messages = [TextMessage(text=fallback_text[:2000], quick_reply=quick_reply)]
         else:
             # ดึงข้อความดิบ
             if isinstance(response, dict) and response.get("type") == "text":
@@ -39,8 +44,8 @@ async def reply_message(line_api: AsyncMessagingApi, reply_token: str, response:
             else:
                 text_content = str(response)
                 
-            messages = [TextMessage(text=text_content[:2000])]
-            logger.info("Sending Text Message response.")
+            messages = [TextMessage(text=text_content[:2000], quick_reply=quick_reply)]
+            logger.info("Sending Text Message response with QuickReply.")
 
         await asyncio.wait_for(
             line_api.reply_message(
