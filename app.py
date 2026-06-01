@@ -47,8 +47,10 @@ LINE_CHANNEL_SECRET = os.environ["LINE_CHANNEL_SECRET"]
 
 line_config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 parser = WebhookParser(LINE_CHANNEL_SECRET)
-api_client = AsyncApiClient(line_config)
-line_api = AsyncMessagingApi(api_client)
+
+# Lazy-initialize inside lifespan to avoid "RuntimeError: no running event loop" at module load
+api_client: AsyncApiClient | None = None
+line_api: AsyncMessagingApi | None = None
 
 # =========================================================
 # Webhook Deduplication Protection
@@ -82,6 +84,12 @@ def is_duplicate(body: bytes) -> bool:
 # =========================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global api_client, line_api
+    
+    # Initialize LINE clients inside the running asyncio event loop
+    api_client = AsyncApiClient(line_config)
+    line_api = AsyncMessagingApi(api_client)
+
     # Startup
     async with engine.begin() as conn:
         # WAL mode: ช่วยลด lock contention ถ้าใช้ SQLite ในเครื่อง
@@ -100,7 +108,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    await api_client.close()
+    if api_client:
+        await api_client.close()
     await engine.dispose()
     logger.info("Shutdown complete")
 
