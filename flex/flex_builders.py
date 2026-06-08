@@ -219,14 +219,43 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                     "contents": [
                         {
                             "type": "text",
-                            "text": "💡 วิธีบันทึกโน้ตส่วนตัว (Free Note) : พิมพ์  ***ตามด้วยข้อความสั้นๆที่ต้องการบันทึก",
+                            "text": "💡 วิธีใช้งานทั่วไป:",
+                            "color": "#34D399",
+                            "size": "xs",
+                            "weight": "bold",
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": "• บันทึกนิสัย: พิมพ์รหัส 2 หลัก เช่น 99",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
                         },
                         {
                             "type": "text",
-                            "text": "📊 วิธีดูสรุปประวัติรวมที่ผ่านมา: พิมพ์คำว่า รวม หรือคำว่า สรุป",
+                            "text": "• บันทึกหลายครั้ง/แก้ไข: พิมพ์ รหัส [เว้นวรรค] จำนวน (เช่น 99 3)",
+                            "color": "#94A3B8",
+                            "size": "xs",
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": "• ยกเลิก/ลบบันทึก: พิมพ์รหัสตัวเปล่าๆ ซ้ำอีกครั้ง (เช่น 99)",
+                            "color": "#94A3B8",
+                            "size": "xs",
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": "• บันทึกโน้ตสั้น (Free Note): พิมพ์ ***ตามด้วยข้อความ",
+                            "color": "#94A3B8",
+                            "size": "xs",
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": "• สรุปประวัติวันนี้: พิมพ์ รวม หรือ สรุป",
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
@@ -241,7 +270,16 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
     fallback_lines = ["📋 Habit Tracker Codes\n"]
     for code, category in command_map.items():
         fallback_lines.append(f"{code} = {category}")
-    fallback_lines.append("\n***ข้อความ = บันทึก note\nรวม = สรุปวันนี้\nเมนู = ดูรายการคำสั่งและรหัส")
+    fallback_lines.append(
+        "\n"
+        "💡 วิธีใช้งาน:\n"
+        "• บันทึกนิสัย: พิมพ์รหัส เช่น 99\n"
+        "• บันทึกหลายครั้ง/แก้ไข: พิมพ์ รหัส [เว้นวรรค] จำนวน เช่น 99 3\n"
+        "• ยกเลิก/ลบ: พิมพ์รหัสเปล่าๆ ซ้ำอีกครั้ง เช่น 99\n"
+        "• บันทึกโน้ต: พิมพ์ ***ข้อความ\n"
+        "• สรุปวันนี้: พิมพ์ รวม หรือ สรุป\n"
+        "• เมนู: พิมพ์ เมนู หรือ help"
+    )
     
     return {
         "type": "flex",
@@ -251,7 +289,17 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
         "quick_reply": build_quick_reply(QuickReplyContext.HELP, command_map)
     }
 
-def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, total_habits: int, command_map: dict[str, str], current_streak: int = 0) -> dict:
+def build_toggle_flex(
+    code: str,
+    category: str,
+    is_done: bool,
+    done_count: int,
+    total_habits: int,
+    command_map: dict[str, str],
+    current_streak: int = 0,
+    count: int | None = None,
+    note: str | None = None,
+) -> dict:
     """สร้าง Flex Message การ์ดตอบรับด่วนเวลาผู้ใช้สั่ง Toggle"""
     percentage = int((done_count / total_habits) * 100)
     icon = HABIT_ICONS.get(code, "▪")
@@ -272,6 +320,13 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
             "width": f"{percentage}%",
             "contents": []
         })
+    
+    extra_details = []
+    if count:
+        extra_details.append(f"×{count}")
+    if note:
+        extra_details.append(note)
+    extra_text = f" ({', '.join(extra_details)})" if extra_details else ""
     
     bubble = {
         "type": "bubble",
@@ -304,7 +359,7 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": f"{icon} {code} {category}",
+                                    "text": f"{icon} {code} {category}{extra_text}",
                                     "color": "#FFFFFF",
                                     "weight": "bold",
                                     "size": "sm"
@@ -365,7 +420,7 @@ def build_toggle_flex(code: str, category: str, is_done: bool, done_count: int, 
         }
     }
     
-    fallback_text = f"{mark_symbol} {code} {category} | {action_text} (รวมวันนี้: {done_count}/{total_habits})"
+    fallback_text = f"{mark_symbol} {code} {category}{extra_text} | {action_text} (รวมวันนี้: {done_count}/{total_habits})"
     
     return {
         "type": "flex",

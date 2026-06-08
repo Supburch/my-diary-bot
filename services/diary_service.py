@@ -133,17 +133,22 @@ async def get_period_summary(
     result = await db.execute(stmt)
     entries = list(result.scalars().all())
 
-    total_checkmarks = len(entries)
+    total_checkmarks = sum(e.count if (e.count is not None and e.count > 0) else 1 for e in entries)
     total_days = (end_date - start_date).days + 1
     unique_active_dates = {e.entry_date for e in entries}
     active_days_count = len(unique_active_dates)
     completion_rate = int((active_days_count / total_days) * 100) if total_days > 0 else 0
     
-    habit_codes = [e.code for e in entries if e.code in command_map]
-    if habit_codes:
-        counter = Counter(habit_codes)
-        top_code, top_freq = counter.most_common(1)[0]
-        top_habit_name = command_map.get(top_code, top_code)
+    if entries:
+        counter = Counter()
+        for e in entries:
+            if e.code in command_map:
+                counter[e.code] += e.count if (e.count is not None and e.count > 0) else 1
+        if counter:
+            top_code, top_freq = counter.most_common(1)[0]
+            top_habit_name = command_map.get(top_code, top_code)
+        else:
+            top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
     else:
         top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
 
@@ -296,6 +301,8 @@ async def toggle_habit(
         total_habits,
         command_map,
         current_streak=current_streak,
+        count=parsed["count"],
+        note=parsed["note"],
     )
 
 
@@ -342,7 +349,7 @@ def parse_infographic_command(text: str) -> dict | None:
     lower = text.strip().lower()
     INFOGRAPHIC_PREFIXES = {"สรุปภาพ", "สรุปรูป", "stats", "stat", "ig", "ภาพสรุป", "รูปสรุป"}
     matched_prefix = None
-    for prefix in INFOGRAPHIC_PREFIXES:
+    for prefix in sorted(INFOGRAPHIC_PREFIXES, key=len, reverse=True):
         if lower.startswith(prefix):
             matched_prefix = prefix
             break
@@ -442,7 +449,7 @@ async def process_message(
         current_streak, longest_streak = await get_user_streaks(db, user_id, today)
 
         # 3. คำนวณค่าสถิติทั่วไป
-        total_checkmarks = len(entries)
+        total_checkmarks = sum(e.count if (e.count is not None and e.count > 0) else 1 for e in entries)
         total_days = (end_date - start_date).days + 1
         unique_active_dates = {e.entry_date for e in entries}
         active_days_count = len(unique_active_dates)
@@ -450,11 +457,16 @@ async def process_message(
 
         # หานิสัยยอดฮิตประจำตัว
         from collections import Counter
-        habit_codes = [e.code for e in entries if e.code in command_map]
-        if habit_codes:
-            counter = Counter(habit_codes)
-            top_code, top_freq = counter.most_common(1)[0]
-            top_habit_name = command_map.get(top_code, top_code)
+        if entries:
+            counter = Counter()
+            for e in entries:
+                if e.code in command_map:
+                    counter[e.code] += e.count if (e.count is not None and e.count > 0) else 1
+            if counter:
+                top_code, top_freq = counter.most_common(1)[0]
+                top_habit_name = command_map.get(top_code, top_code)
+            else:
+                top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
         else:
             top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
 
@@ -473,7 +485,7 @@ async def process_message(
         # 4. คำนวณสถิติรายข้อ (Habit Breakdown)
         habit_breakdown = []
         for code, name in command_map.items():
-            count = sum(1 for e in entries if e.code == code)
+            count = sum(e.count if (e.count is not None and e.count > 0) else 1 for e in entries if e.code == code)
             pct = int((count / total_days) * 100) if total_days > 0 else 0
             habit_breakdown.append({
                 "code": code,
@@ -485,7 +497,9 @@ async def process_message(
         habit_breakdown.sort(key=lambda x: x["count"], reverse=True)
 
         # 5. สรุปความถี่รายวันสำหรับทำตาราง Contribution Calendar
-        contribution_data = Counter(e.entry_date for e in entries)
+        contribution_data = Counter()
+        for e in entries:
+            contribution_data[e.entry_date] += e.count if (e.count is not None and e.count > 0) else 1
 
         # กำหนดคีย์ระบุช่วงเวลาให้เป็นชื่อไฟล์แบบคงที่ (Static) เพื่อป้องกันไฟล์สะสมล้น Supabase
         if info_cmd["period_type"] == "current_month":

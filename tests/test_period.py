@@ -85,17 +85,22 @@ async def get_period_summary(
     result = await db.execute(stmt)
     entries = list(result.scalars().all())
 
-    total_checkmarks = len(entries)
+    total_checkmarks = sum(e.count if (e.count is not None and e.count > 0) else 1 for e in entries)
     total_days = (end_date - start_date).days + 1
     unique_active_dates = {e.entry_date for e in entries}
     active_days_count = len(unique_active_dates)
     completion_rate = int((active_days_count / total_days) * 100) if total_days > 0 else 0
     
-    habit_codes = [e.code for e in entries if e.code in command_map]
-    if habit_codes:
-        counter = Counter(habit_codes)
-        top_code, top_freq = counter.most_common(1)[0]
-        top_habit_name = command_map.get(top_code, top_code)
+    if entries:
+        counter = Counter()
+        for e in entries:
+            if e.code in command_map:
+                counter[e.code] += e.count if (e.count is not None and e.count > 0) else 1
+        if counter:
+            top_code, top_freq = counter.most_common(1)[0]
+            top_habit_name = command_map.get(top_code, top_code)
+        else:
+            top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
     else:
         top_code, top_freq, top_habit_name = None, 0, "ไม่มี"
 
@@ -191,6 +196,25 @@ async def run_period_tests() -> dict:
         assert leap_res["completion_rate"] == 100
         assert leap_res["current_streak"] == 3
         output_lines.append("test_leap_year_period ... PASS")
+
+        # Case 4: Habit count summation verification
+        count_start = date(2026, 7, 1)
+        count_end = date(2026, 7, 3)
+        count_entries = [
+            DiaryEntry(user_id=user_id, entry_date=date(2026, 7, 1), code="99", category="AI Coding", done=True, count=3),
+            DiaryEntry(user_id=user_id, entry_date=date(2026, 7, 2), code="99", category="AI Coding", done=True, count=2),
+            DiaryEntry(user_id=user_id, entry_date=date(2026, 7, 2), code="77", category="Mindfulness", done=True), # count is None (defaults to 1)
+        ]
+        db.add_all(count_entries)
+        await db.commit()
+        
+        count_res = await get_period_summary(db, user_id, count_start, count_end, command_map)
+        # 3 + 2 + 1 = 6 checkmarks
+        assert count_res["total_checkmarks"] == 6, f"Expected 6 checkmarks, got {count_res['total_checkmarks']}"
+        # top habit should be 99 with freq 3 + 2 = 5
+        assert count_res["top_habit_code"] == "99"
+        assert count_res["top_habit_freq"] == 5, f"Expected frequency 5, got {count_res['top_habit_freq']}"
+        output_lines.append("test_count_summation_period ... PASS")
         
         return {
             "status": "ok",
