@@ -285,8 +285,12 @@ async def toggle_habit(
     summary_res = await db.execute(summary_stmt)
     entries = list(summary_res.scalars().all())
 
-    # คำนวณเปอร์เซ็นต์
-    done_count = sum(1 for e in entries if not e.code.startswith("~~") and e.done)
+    # คำนวณเปอร์เซ็นต์ (รวมจำนวนครั้งจริงจาก count field)
+    done_count = sum(
+        (e.count if (e.count is not None and e.count > 0) else 1)
+        for e in entries
+        if not e.code.startswith("~~") and e.done
+    )
     total_habits = len(command_map)
 
     # คำนวณ Streak ปัจจุบัน (ยึดตามวันจริงของ today)

@@ -391,7 +391,7 @@ def build_toggle_flex(
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": f"สำเร็จแล้ว {done_count}/{total_habits}" + (f" | 🔥 ต่อเนื่อง {current_streak} วัน" if current_streak > 0 else ""),
+                                    "text": f"บันทึกรวมวันนี้ {done_count}/{total_habits}" + (f" | 🔥 ต่อเนื่อง {current_streak} วัน" if current_streak > 0 else ""),
                                     "color": "#94A3B8",
                                     "size": "xs"
                                 },
