@@ -17,6 +17,7 @@ from config.user_habits import get_command_map
 
 SUMMARY_CMDS = {"summary", "sum", "สรุป", "วันนี้", "รวม"}
 HELP_CMDS = {"help", "รหัส", "code", "?", "เมนู"}
+GUIDE_CMDS = {"guide", "คู่มือ", "วิธีใช้"}
 WEEKLY_CMDS = {"weekly", "สัปดาห์", "week"}
 MONTHLY_CMDS = {"monthly", "เดือน", "month"}
 NOTE_SUMMARY_PREFIXES = {"สรุปโน้ต", "note", "โน้ต"}
@@ -563,6 +564,11 @@ async def process_message(
     if lower in HELP_CMDS:
         from flex.flex_builders import build_help_flex
         return build_help_flex(command_map)
+
+    # Guide (User Guide ละเอียด)
+    if lower in GUIDE_CMDS:
+        from flex.flex_builders import build_guide_flex
+        return build_guide_flex(command_map)
 
     # Summary Report (Flex Progress Bar + Reflections)
     if lower in SUMMARY_CMDS:

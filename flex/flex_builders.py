@@ -2,7 +2,7 @@ import logging
 from datetime import date
 from enum import Enum
 from db.models import DiaryEntry
-from linebot.v3.messaging import QuickReply, QuickReplyItem, MessageAction
+from linebot.v3.messaging import QuickReply, QuickReplyItem, MessageAction, PostbackAction
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,48 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
                             "color": "#94A3B8",
                             "size": "xs",
                             "wrap": True
+                        }
+                    ]
+                },
+                {
+                    "type": "separator",
+                    "color": "#1E293B"
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "cornerRadius": "md",
+                    "backgroundColor": "#1E3A5F",
+                    "paddingAll": "md",
+                    "action": {
+                        "type": "message",
+                        "label": "guide",
+                        "text": "guide"
+                    },
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "📖",
+                            "size": "sm",
+                            "flex": 0
+                        },
+                        {
+                            "type": "text",
+                            "text": "ดูคู่มือการใช้งานแบบละเอียด",
+                            "color": "#60A5FA",
+                            "size": "sm",
+                            "weight": "bold",
+                            "margin": "md",
+                            "flex": 1
+                        },
+                        {
+                            "type": "text",
+                            "text": "›",
+                            "color": "#60A5FA",
+                            "size": "md",
+                            "weight": "bold",
+                            "align": "end",
+                            "flex": 0
                         }
                     ]
                 }
@@ -1090,4 +1132,228 @@ def build_note_summary_flex(
         "contents": bubble,
         "fallback_text": "\n".join(fallback_lines),
         "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
+    }
+
+
+def build_guide_flex(command_map: dict[str, str]) -> dict:
+    """สร้าง Flex Message คู่มือการใช้งานแบบละเอียด (User Guide) ในสไตล์ Zen Slate"""
+
+    def section_header(emoji: str, title: str, subtitle: str = "") -> dict:
+        contents = [
+            {
+                "type": "text",
+                "text": f"{emoji} {title}",
+                "color": "#34D399",
+                "size": "sm",
+                "weight": "bold",
+                "wrap": True
+            }
+        ]
+        if subtitle:
+            contents.append({
+                "type": "text",
+                "text": subtitle,
+                "color": "#94A3B8",
+                "size": "xxs",
+                "wrap": True,
+                "margin": "xs"
+            })
+        return {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1E293B",
+            "cornerRadius": "md",
+            "paddingAll": "md",
+            "spacing": "xs",
+            "contents": contents
+        }
+
+    def bullet(text: str, highlight: str = "") -> dict:
+        """สร้าง bullet row, highlight คือส่วนที่ต้องการเน้นสี (แสดงก่อน)"""
+        row_contents = []
+        if highlight:
+            row_contents.append({
+                "type": "text",
+                "text": highlight,
+                "color": "#60A5FA",
+                "size": "xs",
+                "weight": "bold",
+                "flex": 0,
+                "wrap": False
+            })
+        row_contents.append({
+            "type": "text",
+            "text": text,
+            "color": "#CBD5E1",
+            "size": "xs",
+            "wrap": True,
+            "flex": 1
+        })
+        return {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
+            "contents": row_contents,
+            "paddingStart": "sm"
+        }
+
+    def separator() -> dict:
+        return {"type": "separator", "color": "#1E293B", "margin": "md"}
+
+    body_contents = [
+        # ─── ส่วนที่ 1: Habit Tracking ───
+        section_header("🎯", "การบันทึกและลบนิสัย", "ใช้ตัวเลข 2 หลัก เช่น 00, 11, 99"),
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+                bullet("บันทึกธรรมดา", "11"),
+                bullet("การส่งรหัสเดิมซ้ำ (ไม่มีจำนวน) = ลบออก (Toggle OFF)"),
+                bullet("บันทึกระบุจำนวน", "11 2"),
+                bullet("บันทึกพร้อมโน้ต", "11 อ่านบทความวิชาการ"),
+                bullet("บันทึกครบทั้งจำนวนและโน้ต", "11 2 อ่านบทความ"),
+                bullet("บันทึกย้อนหลังข้ามปี", "11 2024"),
+                bullet("(ระบบบันทึกวันและเดือนนี้ในปีนั้น)"),
+            ]
+        },
+        separator(),
+        # ─── ส่วนที่ 2: Free Note ───
+        section_header("📝", "บันทึกโน้ตทั่วไป (Free Note)", "เขียนบันทึกความรู้สึก หรือเรื่องทั่วไป"),
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+                bullet("บันทึกโน้ต", "*** ข้อความ"),
+                bullet("เช่น: *** วันนี้ประชุมเสร็จลุล่วงดี"),
+                bullet("ระบุปีย้อนหลัง", "*** ทริปญี่ปุ่น 2024"),
+            ]
+        },
+        separator(),
+        # ─── ส่วนที่ 3: รายงานและสถิติ ───
+        section_header("📊", "คำสั่งเรียกดูรายงานและสถิติ"),
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+                bullet("สรุปประจำวันนี้", "summary / สรุป / รวม"),
+                bullet("สรุปรายสัปดาห์ (ย้อนหลัง 7 วัน)", "weekly / สัปดาห์"),
+                bullet("สรุปรายเดือน (ย้อนหลัง 30 วัน)", "monthly / เดือน"),
+                bullet("ดูรหัสทั้งหมด", "help / รหัส / เมนู"),
+            ]
+        },
+        separator(),
+        # ─── ส่วนที่ 4: สรุปโน้ต ───
+        section_header("📝", "สรุปโน้ต (Note Summary)", "ดึงโน้ตที่บันทึกผ่าน *** มาสรุป"),
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+                bullet("สรุปโน้ตเดือนนี้", "สรุปโน้ต / note / โน้ต"),
+                bullet("ระบุเดือน", "สรุปโน้ต 01"),
+                bullet("ระบุปี", "สรุปโน้ต 2024"),
+            ]
+        },
+        separator(),
+        # ─── ส่วนที่ 5: Infographic ───
+        section_header("🖼️", "สรุปสถิติเป็นรูปภาพ (Infographic)", "ตาราง Contribution Calendar + สถิติ Streak"),
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+                bullet("สรุปภาพเดือนนี้", "สรุปภาพ / stats / ig"),
+                bullet("ระบุเดือน", "สรุปภาพ 01 / stats 05"),
+                bullet("ระบุปี", "สรุปภาพ 2024 / stats 2024"),
+            ]
+        },
+    ]
+
+    bubble = {
+        "type": "bubble",
+        "size": "giga",
+        "styles": {
+            "header": {"backgroundColor": "#0F172A"},
+            "body": {"backgroundColor": "#0F172A"}
+        },
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "📖 USER GUIDE",
+                    "color": "#60A5FA",
+                    "weight": "bold",
+                    "size": "sm",
+                    "letterSpacing": "0.1em"
+                },
+                {
+                    "type": "text",
+                    "text": "คู่มือการใช้งาน Diary Bot",
+                    "color": "#FFFFFF",
+                    "weight": "bold",
+                    "size": "md",
+                    "margin": "xs"
+                },
+                {
+                    "type": "text",
+                    "text": "รวมคำสั่งทั้งหมดที่ใช้งานได้",
+                    "color": "#94A3B8",
+                    "size": "xxs"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": body_contents
+        }
+    }
+
+    fallback_text = (
+        "📖 USER GUIDE — คู่มือการใช้งาน Diary Bot\n"
+        "══════════════════════════\n"
+        "🎯 บันทึกนิสัย: พิมพ์รหัส 2 หลัก เช่น 11\n"
+        "  • 11 2 = บันทึก 2 ครั้ง\n"
+        "  • 11 อ่านหนังสือ = บันทึกพร้อมโน้ต\n"
+        "  • 11 2024 = บันทึกย้อนหลังปี 2024\n"
+        "  • พิมพ์รหัสซ้ำ (เปล่า) = ลบออก\n"
+        "──────────────────────────\n"
+        "📝 โน้ตทั่วไป: พิมพ์ *** ตามด้วยข้อความ\n"
+        "  เช่น *** วันนี้ทำงานดีมาก\n"
+        "──────────────────────────\n"
+        "📊 รายงานและสถิติ:\n"
+        "  • summary / สรุป / รวม = สรุปวันนี้\n"
+        "  • weekly / สัปดาห์ = สรุปรายสัปดาห์\n"
+        "  • monthly / เดือน = สรุปรายเดือน\n"
+        "  • help / รหัส / เมนู = ดูรหัสทั้งหมด\n"
+        "──────────────────────────\n"
+        "📝 สรุปโน้ต:\n"
+        "  • สรุปโน้ต / note / โน้ต = เดือนนี้\n"
+        "  • สรุปโน้ต 01 = เดือนมกราคม\n"
+        "  • สรุปโน้ต 2024 = ปี 2024\n"
+        "──────────────────────────\n"
+        "🖼️ สรุปสถิติรูปภาพ:\n"
+        "  • สรุปภาพ / stats / ig = เดือนนี้\n"
+        "  • สรุปภาพ 01 / stats 05 = ระบุเดือน\n"
+        "  • สรุปภาพ 2024 / stats 2024 = ระบุปี"
+    )
+
+    return {
+        "type": "flex",
+        "alt_text": "📖 คู่มือการใช้งาน Diary Bot",
+        "contents": bubble,
+        "fallback_text": fallback_text,
+        "quick_reply": build_quick_reply(QuickReplyContext.HELP, command_map)
     }
