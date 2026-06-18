@@ -1275,6 +1275,19 @@ def build_guide_flex(command_map: dict[str, str]) -> dict:
                 bullet("ระบุปี", "สรุปภาพ 2024 / stats 2024"),
             ]
         },
+        separator(),
+        # ─── ส่วนที่ 6: การเพิ่มกิจกรรมใหม่ ───
+        section_header("🛠️", "การเพิ่มกิจกรรมใหม่ (Developer)", "สำหรับเจ้าของบอตที่ต้องการปรับแต่งรหัส"),
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+                bullet("แก้ไขรหัส 2 หลักและชื่อใน config/user_habits.py", "1. เพิ่มรหัส"),
+                bullet("เพิ่มไอคอน Emoji ประจำรหัสใน flex/flex_builders.py", "2. เพิ่ม Emoji"),
+            ]
+        },
     ]
 
     bubble = {
@@ -1347,7 +1360,11 @@ def build_guide_flex(command_map: dict[str, str]) -> dict:
         "🖼️ สรุปสถิติรูปภาพ:\n"
         "  • สรุปภาพ / stats / ig = เดือนนี้\n"
         "  • สรุปภาพ 01 / stats 05 = ระบุเดือน\n"
-        "  • สรุปภาพ 2024 / stats 2024 = ระบุปี"
+        "  • สรุปภาพ 2024 / stats 2024 = ระบุปี\n"
+        "──────────────────────────\n"
+        "🛠️ วิธีเพิ่มกิจกรรมใหม่ (Developer):\n"
+        "  1. เพิ่มรหัส 2 หลัก & ชื่อใน config/user_habits.py\n"
+        "  2. เพิ่มไอคอน Emoji ใน flex/flex_builders.py"
     )
 
     return {

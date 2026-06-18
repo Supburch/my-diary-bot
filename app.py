@@ -9,6 +9,8 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 
+import httpx
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from linebot.v3 import WebhookParser
@@ -35,10 +37,18 @@ from handlers.message_handler import handle_webhook_event
 # บันทึกเวลาเริ่มระบบเพื่อทำ Observability
 START_TIME = time.time()
 BANGKOK = ZoneInfo("Asia/Bangkok")
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# =========================================================
+# Keep-Alive Config (ป้องกัน Render Free Tier spin-down)
+# =========================================================
+# ตั้ง KEEP_ALIVE_URL เป็น URL ของบอท (เช่น https://diarybot.onrender.com)
+# ถ้าไม่ตั้ง จะไม่ทำ self-ping
+KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "").strip().rstrip("/")
+KEEP_ALIVE_INTERVAL = int(os.environ.get("KEEP_ALIVE_INTERVAL", "720"))  # 720 วินาที = 12 นาที
 
 # =========================================================
 # LINE Config
@@ -82,6 +92,27 @@ async def is_event_duplicate(dedup_id: str) -> bool:
         return False
 
 # =========================================================
+# Keep-Alive Background Task
+# =========================================================
+async def _keep_alive_loop():
+    """Self-ping เพื่อป้องกัน Render free tier spin down
+    ทำงานเมื่อตั้ง KEEP_ALIVE_URL เท่านั้น (opt-in)
+    """
+    url = f"{KEEP_ALIVE_URL}/ping"
+    logger.info(f"Keep-alive started → {url} every {KEEP_ALIVE_INTERVAL}s")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+            try:
+                resp = await client.get(url)
+                logger.info(f"Keep-alive ping → {resp.status_code}")
+            except Exception as exc:
+                # ไม่ crash app — แค่ log warning แล้วลองใหม่รอบถัดไป
+                logger.warning(f"Keep-alive ping failed: {exc}")
+
+
+# =========================================================
 # FastAPI App Lifespan
 # =========================================================
 @asynccontextmanager
@@ -123,9 +154,25 @@ async def lifespan(app: FastAPI):
         f"DiaryBot started | db={DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL} | tz={BANGKOK}"
     )
 
+    # เริ่ม keep-alive background task (ถ้าตั้ง KEEP_ALIVE_URL)
+    keep_alive_task: asyncio.Task | None = None
+    if KEEP_ALIVE_URL:
+        keep_alive_task = asyncio.create_task(_keep_alive_loop())
+        logger.info(f"Keep-alive enabled for {KEEP_ALIVE_URL}")
+    else:
+        logger.info("Keep-alive disabled (KEEP_ALIVE_URL not set)")
+
     yield
 
-    # Shutdown
+    # Shutdown — ยกเลิก keep-alive task ก่อน
+    if keep_alive_task and not keep_alive_task.done():
+        keep_alive_task.cancel()
+        try:
+            await keep_alive_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Keep-alive task stopped")
+
     if api_client:
         await api_client.close()
     await engine.dispose()
