@@ -1284,8 +1284,8 @@ def build_guide_flex(command_map: dict[str, str]) -> dict:
             "spacing": "sm",
             "margin": "md",
             "contents": [
-                bullet("แก้ไขรหัส 2 หลักและชื่อใน config/user_habits.py", "1. เพิ่มรหัส"),
-                bullet("เพิ่มไอคอน Emoji ประจำรหัสใน flex/flex_builders.py", "2. เพิ่ม Emoji"),
+                bullet("เพิ่มรหัสตัวเลข 2 หลักและชื่อกิจกรรม", "user_habits.py"),
+                bullet("เพิ่มไอคอน Emoji ประจำรหัส", "flex_builders.py"),
             ]
         },
     ]
@@ -1363,8 +1363,8 @@ def build_guide_flex(command_map: dict[str, str]) -> dict:
         "  • สรุปภาพ 2024 / stats 2024 = ระบุปี\n"
         "──────────────────────────\n"
         "🛠️ วิธีเพิ่มกิจกรรมใหม่ (Developer):\n"
-        "  1. เพิ่มรหัส 2 หลัก & ชื่อใน config/user_habits.py\n"
-        "  2. เพิ่มไอคอน Emoji ใน flex/flex_builders.py"
+        "  • user_habits.py = เพิ่มรหัสตัวเลข 2 หลักและชื่อกิจกรรม\n"
+        "  • flex_builders.py = เพิ่มไอคอน Emoji ประจำรหัส"
     )
 
     return {
