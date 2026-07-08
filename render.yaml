@@ -26,3 +26,7 @@ services:
         value: "5"
       - key: MAX_OVERFLOW
         value: "5"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
