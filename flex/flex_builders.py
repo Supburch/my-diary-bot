@@ -15,6 +15,7 @@ class QuickReplyContext(Enum):
 def get_quick_reply_habits(
     command_map: dict[str, str],
     context: QuickReplyContext,
+    custom_icons: dict = None,
 ) -> list[tuple[str, str]]:
     """เรียงลำดับความสำคัญและคัดเลือก Habit ที่เหมาะสมเพื่อนำไปสร้าง Quick Reply (Cap สูงสุดไม่เกิน LINE Limit 13)"""
     # จัดลำดับความสำคัญแบบ Context-Aware:
@@ -41,7 +42,7 @@ def get_quick_reply_habits(
         # จัดเรียงให้ปุ่ม "สรุปวันนี้" อยู่ลำดับแรก
         habits = []
         for c in available_codes[:limit]:
-            icon = HABIT_ICONS.get(c, "▪")
+            icon = get_icon(c, custom_icons)
             name = command_map[c]
             habits.append((f"{icon} {c} {name}", c))
             
