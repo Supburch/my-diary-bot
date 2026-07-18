@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import logging
@@ -233,8 +234,19 @@ async def callback(request: Request):
     body = await request.body()
     signature = request.headers.get("X-Line-Signature", "")
 
+    # [LINE Webhook Verification] LINE ส่ง POST /callback พร้อม body ว่าง ({"events":[]}) เพื่อยืนยัน URL
+    # ต้องตอบ 200 OK ทันที ไม่เช็ค signature เพราะยังไม่มี event จริง
+    body_str = body.decode("utf-8")
     try:
-        events = parser.parse(body.decode("utf-8"), signature)
+        parsed_body = json.loads(body_str) if body_str else {}
+        if not parsed_body.get("events"):  # events เป็น [] หรือไม่มี key
+            logger.info("LINE webhook verification request received — returning 200 OK")
+            return {"status": "ok"}
+    except Exception:
+        pass  # ถ้า parse ไม่ได้ ปล่อยผ่านไปตรวจ signature ตามปกติ
+
+    try:
+        events = parser.parse(body_str, signature)
     except InvalidSignatureError:
         raise HTTPException(status_code=401, detail="invalid signature")
 

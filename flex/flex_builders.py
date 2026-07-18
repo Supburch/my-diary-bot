@@ -54,7 +54,7 @@ def get_quick_reply_habits(
         
         habits = []
         for c in available_codes[:limit]:
-            icon = HABIT_ICONS.get(c, "▪")
+            icon = get_icon(c, custom_icons)
             name = command_map[c]
             habits.append((f"{icon} {c} {name}", c))
             
@@ -71,7 +71,7 @@ def get_quick_reply_habits(
         
         habits = []
         for c in sorted_codes[:limit]:
-            icon = HABIT_ICONS.get(c, "▪")
+            icon = get_icon(c, custom_icons)
             name = command_map[c]
             habits.append((f"{icon} {c} {name}", c))
             
@@ -79,11 +79,11 @@ def get_quick_reply_habits(
         
     return []
 
-def build_quick_reply(context: QuickReplyContext, command_map: dict[str, str]) -> QuickReply | None:
+def build_quick_reply(context: QuickReplyContext, command_map: dict[str, str], custom_icons: dict = None) -> QuickReply | None:
     """สร้าง QuickReply ออบเจกต์ตามแต่ละสถานการณ์การจิ้มของผู้ใช้งานเพื่อเพิ่มความสะดวกสบาย"""
     items = []
     
-    actions = get_quick_reply_habits(command_map, context)
+    actions = get_quick_reply_habits(command_map, context, custom_icons)
     if not actions:
         return None
 
@@ -110,7 +110,13 @@ HABIT_ICONS = {
     "99": "💻",
 }
 
-def build_help_flex(command_map: dict[str, str]) -> dict:
+def get_icon(code: str, custom_icons: dict = None) -> str:
+    """Helper สำหรับดึงไอคอนจาก custom_icons หรือ fallback ไปยัง HABIT_ICONS"""
+    if custom_icons and code in custom_icons:
+        return custom_icons[code]
+    return HABIT_ICONS.get(code, "▪")
+
+def build_help_flex(command_map: dict[str, str], custom_icons: dict = None) -> dict:
     """สร้าง Flex Message หน้า Help Menu ในสไตล์ Zen Slate & Grid 2 คอลัมน์"""
     grid_contents = []
     keys = list(command_map.keys())
@@ -122,7 +128,7 @@ def build_help_flex(command_map: dict[str, str]) -> dict:
             if i + j < len(keys):
                 code = keys[i + j]
                 category = command_map[code]
-                icon = HABIT_ICONS.get(code, "▪")
+                icon = get_icon(code, custom_icons)
                 
                 box = {
                     "type": "box",

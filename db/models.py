@@ -17,3 +17,13 @@ class DiaryEntry(Base):
     done: Mapped[bool] = mapped_column(Boolean, default=True)
     count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class UserHabit(Base):
+    __tablename__ = "user_habits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), index=True)
+    code: Mapped[str] = mapped_column(String(2))
+    category: Mapped[str] = mapped_column(String(255))
+    icon: Mapped[str] = mapped_column(String(10), default="▪")

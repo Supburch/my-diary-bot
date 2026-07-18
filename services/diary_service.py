@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Timezone
 BANGKOK = ZoneInfo("Asia/Bangkok")
 
-from config.user_habits import get_command_map
+from config.user_habits import get_command_map, get_habit_icons
 
 SUMMARY_CMDS = {"summary", "sum", "สรุป", "วันนี้", "รวม"}
 HELP_CMDS = {"help", "รหัส", "code", "?", "เมนู"}
@@ -391,7 +391,53 @@ async def process_message(
     text = text.strip()
     lower = text.lower()
     today = today_bkk()
-    command_map = get_command_map(user_id)
+    command_map = await get_command_map(db, user_id)
+    custom_icons = await get_habit_icons(db, user_id)
+
+    # Dynamic Habit Management
+    if lower.startswith("เพิ่ม "):
+        parts = text.split(maxsplit=3)
+        if len(parts) >= 3:
+            code = parts[1]
+            if code.isdigit() and len(code) == 2:
+                name = parts[2]
+                icon = parts[3] if len(parts) == 4 else "▪"
+                
+                from db.models import UserHabit
+                
+                existing = await db.execute(select(UserHabit).where(UserHabit.user_id == user_id, UserHabit.code == code))
+                habit = existing.scalar_one_or_none()
+                
+                if habit:
+                    habit.category = name
+                    habit.icon = icon
+                else:
+                    habit = UserHabit(user_id=user_id, code=code, category=name, icon=icon)
+                    db.add(habit)
+                    
+                await db.commit()
+                return f"✅ บันทึกกิจกรรมใหม่สำเร็จ!\nรหัส: {code}\nชื่อ: {name}\nไอคอน: {icon}"
+            else:
+                return "❌ รหัสกิจกรรมต้องเป็นตัวเลข 2 หลักเท่านั้น เช่น 'เพิ่ม 12 วิ่ง 🏃'"
+        else:
+            return "❌ รูปแบบคำสั่งไม่ถูกต้อง\nวิธีใช้: เพิ่ม [รหัส2หลัก] [ชื่อ] [ไอคอน]\nตัวอย่าง: เพิ่ม 12 วิ่ง 🏃"
+
+    if lower.startswith("ลบกิจกรรม ") or lower.startswith("ลบ "):
+        parts = text.split()
+        if len(parts) == 2:
+            code = parts[1]
+            if code.isdigit() and len(code) == 2:
+                from db.models import UserHabit
+                existing = await db.execute(select(UserHabit).where(UserHabit.user_id == user_id, UserHabit.code == code))
+                habit = existing.scalar_one_or_none()
+                if habit:
+                    await db.delete(habit)
+                    await db.commit()
+                    return f"🗑️ ลบกิจกรรมรหัส {code} เรียบร้อยแล้ว"
+                else:
+                    return f"❌ ไม่พบกิจกรรมรหัส {code} ในระบบของคุณ"
+            else:
+                return "❌ รหัสกิจกรรมต้องเป็นตัวเลข 2 หลักเท่านั้น"
 
     # Note Summary (สรุปโน้ต)
     note_cmd = parse_note_summary_command(text)
@@ -416,7 +462,7 @@ async def process_message(
 
         notes = await get_notes_by_period(db, user_id, start_date, end_date)
         from flex.flex_builders import build_note_summary_flex
-        return build_note_summary_flex(period_label, notes, command_map)
+        return build_note_summary_flex(period_label, notes, command_map, custom_icons)
 
     # Infographic Summary (สรุปภาพสถิติ)
     info_cmd = parse_infographic_command(text)
@@ -552,23 +598,23 @@ async def process_message(
         start_date = today - timedelta(days=6)
         stats = await get_period_summary(db, user_id, start_date, today, command_map)
         from flex.flex_builders import build_period_summary_flex
-        return build_period_summary_flex("Weekly Summary", start_date, today, stats, command_map)
+        return build_period_summary_flex("Weekly Summary", start_date, today, stats, command_map, custom_icons)
 
     if lower in MONTHLY_CMDS:
         start_date = today - timedelta(days=29)
         stats = await get_period_summary(db, user_id, start_date, today, command_map)
         from flex.flex_builders import build_period_summary_flex
-        return build_period_summary_flex("Monthly Summary", start_date, today, stats, command_map)
+        return build_period_summary_flex("Monthly Summary", start_date, today, stats, command_map, custom_icons)
 
     # Help Menu (Flex Grid 2 คอลัมน์)
     if lower in HELP_CMDS:
         from flex.flex_builders import build_help_flex
-        return build_help_flex(command_map)
+        return build_help_flex(command_map, custom_icons)
 
     # Guide (User Guide ละเอียด)
     if lower in GUIDE_CMDS:
         from flex.flex_builders import build_guide_flex
-        return build_guide_flex(command_map)
+        return build_guide_flex(command_map, custom_icons)
 
     # Summary Report (Flex Progress Bar + Reflections)
     if lower in SUMMARY_CMDS:
@@ -589,7 +635,8 @@ async def process_message(
             today,
             command_map,
             current_streak=current_streak,
-            best_streak=best_streak
+            best_streak=best_streak,
+            custom_icons=custom_icons
         )
 
     # Free note (Text)
