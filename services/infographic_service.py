@@ -47,14 +47,6 @@ def ensure_fonts_downloaded():
             "Pillow will fallback to system default fonts."
         )
 
-import re
-def _shape_thai(text: str) -> str:
-    """แก้ปัญหาสระบนและวรรณยุกต์ซ้อนกัน (เช่น ไม้หันอากาศ + ไม้โท) ด้วย TIS-620 PUA"""
-    if not isinstance(text, str): return str(text)
-    tone_map = {'\u0e48':'\uf70a', '\u0e49':'\uf70b', '\u0e4a':'\uf70c', '\u0e4b':'\uf70d', '\u0e4c':'\uf70e'}
-    return re.sub(r'([\u0e31\u0e34\u0e35\u0e36\u0e37\u0e47\u0e4d])([\u0e48\u0e49\u0e4a\u0e4b\u0e4c])', 
-                  lambda m: m.group(1) + tone_map.get(m.group(2), m.group(2)), text)
-
 def draw_wrapped_text(draw, text, x, y, max_width, font, fill):
     """ฟังก์ชันช่วยตัดบรรทัดข้อความภาษาไทยเพื่อไม่ให้ล้นการ์ด"""
     words = text.split()
@@ -118,12 +110,6 @@ def render_infographic_sync(
     # สร้างรูปภาพขนาด 800x1000 pixels โทนสีเข้ม
     img = Image.new("RGB", (800, 1000), color=COLOR_BG)
     draw = ImageDraw.Draw(img)
-    
-    # หุ้มฟังก์ชันข้อความเพื่อจัดรูปสระและวรรณยุกต์ไทยอัตโนมัติ (แก้ปัญหาสระซ้อน)
-    orig_text = draw.text
-    orig_textbbox = draw.textbbox
-    draw.text = lambda xy, text, *a, **kw: orig_text(xy, _shape_thai(text), *a, **kw)
-    draw.textbbox = lambda xy, text, *a, **kw: orig_textbbox(xy, _shape_thai(text), *a, **kw)
     
     # ---------------------------------------------------------
     # 1. Header Section
