@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 THREAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 CONCURRENCY_SEMAPHORE = asyncio.Semaphore(2)
 
-FONT_DIR = "fonts"
+FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fonts")
 REGULAR_FONT_PATH = os.path.join(FONT_DIR, "NotoSansThai-Regular.ttf")
 BOLD_FONT_PATH = os.path.join(FONT_DIR, "NotoSansThai-Bold.ttf")
 
