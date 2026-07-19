@@ -151,8 +151,8 @@ def render_infographic_sync(
         (
             40, 135 + card_h + gap, 
             "บันทึกต่อเนื่องปัจจุบัน", 
-            f"{stats.get('current_streak', 0)} วัน 🔥", 
-            f"ทำสถิติสูงสุด: {stats.get('longest_streak', 0)} วัน 🏆", 
+            f"{stats.get('current_streak', 0)} วัน", 
+            f"ทำสถิติสูงสุด: {stats.get('longest_streak', 0)} วัน", 
             COLOR_AMBER
         ),
         (
