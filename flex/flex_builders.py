@@ -479,7 +479,14 @@ def build_toggle_flex(
         "quick_reply": build_quick_reply(QuickReplyContext.TOGGLE, command_map)
     }
 
-def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map: dict[str, str], current_streak: int = 0, best_streak: int = 0) -> dict:
+def build_summary_flex(
+    entries: list[DiaryEntry],
+    target_date: date,
+    command_map: dict[str, str],
+    current_streak: int = 0,
+    best_streak: int = 0,
+    custom_icons: dict = None,
+) -> dict:
     """สร้าง Flex Message หน้าสรุปคะแนนประจำวันพร้อมเกจความคืบหน้าและกล่อง Reflection"""
     habit_map = {e.code: e for e in entries if not e.code.startswith("~~")}
     
@@ -498,7 +505,7 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         entry = habit_map.get(code)
         is_done = bool(entry and entry.done)
         
-        icon = HABIT_ICONS.get(code, "▪")
+        icon = get_icon(code, custom_icons)
         
         if is_done:
             done_count += 1
@@ -739,7 +746,7 @@ def build_summary_flex(entries: list[DiaryEntry], target_date: date, command_map
         "alt_text": "📅 สรุปประวัติไดอารี่ประจำวัน",
         "contents": bubble,
         "fallback_text": "\n".join(fallback_lines),
-        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map, custom_icons)
     }
 
 
@@ -748,7 +755,8 @@ def build_period_summary_flex(
     start_date: date,
     end_date: date,
     stats: dict,
-    command_map: dict[str, str]
+    command_map: dict[str, str],
+    custom_icons: dict = None,
 ) -> dict:
     """สร้าง Flex Message การ์ดรายงานสรุปสถิติประจำช่วงเวลา (Weekly/Monthly Summary) ดีไซน์หรู Zen Slate"""
     completion_rate = stats["completion_rate"]
@@ -942,14 +950,15 @@ def build_period_summary_flex(
         "alt_text": f"📊 รายงานสรุปสถิติ {period_name}",
         "contents": bubble,
         "fallback_text": fallback_text,
-        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map, custom_icons)
     }
 
 
 def build_note_summary_flex(
     period_label: str,
     notes: list,
-    command_map: dict[str, str]
+    command_map: dict[str, str],
+    custom_icons: dict = None,
 ) -> dict:
     """สร้าง Flex Message การ์ดรายงานสรุปโน้ตย้อนหลัง ดีไซน์ Zen Slate & Emerald
     รองรับกรณีไม่มีโน้ต (empty state) และแสดงโน้ตจัดกลุ่มตามวันที่
@@ -1138,11 +1147,11 @@ def build_note_summary_flex(
         "alt_text": period_label,
         "contents": bubble,
         "fallback_text": "\n".join(fallback_lines),
-        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map)
+        "quick_reply": build_quick_reply(QuickReplyContext.SUMMARY, command_map, custom_icons)
     }
 
 
-def build_guide_flex(command_map: dict[str, str]) -> dict:
+def build_guide_flex(command_map: dict[str, str], custom_icons: dict = None) -> dict:
     """สร้าง Flex Message คู่มือการใช้งานแบบละเอียด (User Guide) ในสไตล์ Zen Slate"""
 
     def section_header(emoji: str, title: str, subtitle: str = "") -> dict:
@@ -1362,5 +1371,5 @@ def build_guide_flex(command_map: dict[str, str]) -> dict:
         "alt_text": "📖 คู่มือการใช้งาน Diary Bot",
         "contents": bubble,
         "fallback_text": fallback_text,
-        "quick_reply": build_quick_reply(QuickReplyContext.HELP, command_map)
+        "quick_reply": build_quick_reply(QuickReplyContext.HELP, command_map, custom_icons)
     }
