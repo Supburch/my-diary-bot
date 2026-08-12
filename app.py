@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "").strip().rstrip("/")
 KEEP_ALIVE_INTERVAL = int(os.environ.get("KEEP_ALIVE_INTERVAL", "720"))  # 720 วินาที = 12 นาที
 
+# Daily reminder (APScheduler)
+REMINDER_HOUR = int(os.environ.get("REMINDER_HOUR", "22"))
+REMINDER_ENABLED = os.environ.get("REMINDER_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # =========================================================
 # LINE Config
 # =========================================================
@@ -163,9 +167,34 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Keep-alive disabled (KEEP_ALIVE_URL not set)")
 
+    # Daily reminder scheduler (workers=1 บน Render — ใช้ Redis lock ถ้ามีหลาย instance)
+    scheduler = None
+    if REMINDER_ENABLED:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from services.reminder_service import send_daily_reminders
+
+        scheduler = AsyncIOScheduler(timezone=BANGKOK)
+        scheduler.add_job(
+            send_daily_reminders,
+            trigger="cron",
+            hour=REMINDER_HOUR,
+            minute=0,
+            id="daily_reminder",
+            replace_existing=True,
+            kwargs={"line_api": line_api},
+        )
+        scheduler.start()
+        logger.info(f"Daily reminder scheduler started (hour={REMINDER_HOUR}, tz={BANGKOK})")
+    else:
+        logger.info("Daily reminder disabled (REMINDER_ENABLED=false)")
+
     yield
 
-    # Shutdown — ยกเลิก keep-alive task ก่อน
+    # Shutdown — หยุด scheduler และ keep-alive ก่อน
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+        logger.info("Daily reminder scheduler stopped")
+
     if keep_alive_task and not keep_alive_task.done():
         keep_alive_task.cancel()
         try:

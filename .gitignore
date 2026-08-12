@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Environment & secrets
+.env
+.env.local
+
+# Database
+*.db
+diary.db
+
+# IDE & OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+test_thai*.png
+
+# Font archives (bundled .ttf files are tracked)
+NotoSansThai.zip

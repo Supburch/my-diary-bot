@@ -40,10 +40,10 @@ CONTRIBUTION_COLORS = {
 }
 
 def ensure_fonts_downloaded():
-    """ตรวจสอบว่าฟอนต์ Noto Sans Thai ได้ถูกติดตั้งและจัดเตรียมทางกายภาพในโฟลเดอร์ fonts/ แล้ว"""
+    """ตรวจสอบว่าฟอนต์ Kanit อยู่ในโฟลเดอร์ fonts/ (รองรับทั้งไทยและอังกฤษ)"""
     if not os.path.exists(REGULAR_FONT_PATH) or not os.path.exists(BOLD_FONT_PATH):
         logger.warning(
-            "Noto Sans Thai font files are missing from fonts/ directory! "
+            "Kanit font files are missing from fonts/ directory! "
             "Pillow will fallback to system default fonts."
         )
 
@@ -98,7 +98,7 @@ def render_infographic_sync(
         font_body = ImageFont.truetype(REGULAR_FONT_PATH, 14)
         font_footer = ImageFont.truetype(REGULAR_FONT_PATH, 12)
     except Exception as e:
-        logger.warning(f"Unable to load Noto Sans Thai fonts ({e}). Falling back to system default font.")
+        logger.warning(f"Unable to load Kanit fonts ({e}). Falling back to system default font.")
         font_title = ImageFont.load_default()
         font_sub = ImageFont.load_default()
         font_card_val = ImageFont.load_default()
