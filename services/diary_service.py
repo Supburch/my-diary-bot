@@ -3,7 +3,7 @@ import uuid
 import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DiaryEntry
@@ -22,6 +22,8 @@ WEEKLY_CMDS = {"weekly", "สัปดาห์", "week"}
 MONTHLY_CMDS = {"monthly", "เดือน", "month"}
 NOTE_SUMMARY_PREFIXES = {"สรุปโน้ต", "note", "โน้ต"}
 NOTE_MAX_LEN = 500
+KEYWORD_RECALL_PREFIXES = ("ดู ", "หา ", "ค้น ")
+KEYWORD_MAX_LEN = 40
 
 # ชื่อเดือนภาษาไทย
 THAI_MONTHS = {
@@ -109,6 +111,21 @@ async def get_notes_by_period(
         DiaryEntry.entry_date <= end_date,
         DiaryEntry.code.like("~~%")
     ).order_by(DiaryEntry.entry_date.asc())
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_notes_by_keyword(
+    db: AsyncSession,
+    user_id: str,
+    keyword: str,
+) -> list:
+    """ดึงโน้ตทั้งหมดที่บันทึกด้วยคีย์เวิร์ดที่ระบุ (ไม่สนใจตัวพิมพ์เล็ก/ใหญ่)"""
+    stmt = select(DiaryEntry).where(
+        DiaryEntry.user_id == user_id,
+        DiaryEntry.keyword.isnot(None),
+        func.lower(DiaryEntry.keyword) == keyword.lower(),
+    ).order_by(DiaryEntry.entry_date.desc())
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -344,6 +361,73 @@ def parse_note_summary_command(text: str) -> dict | None:
         return {"period_type": "year", "value": int(year_match.group(1))}
 
     return None
+
+
+def split_keyword_note(raw: str) -> tuple[str | None, str]:
+    """แยกคีย์เวิร์ดออกจากโน้ตเมื่อผู้ใช้พิมพ์ ***keyword: เนื้อหา
+    คืนค่า (keyword, note) หากเป็นรูปแบบคีย์เวิร์ด มิฉะนั้นคืน (None, note เดิม)
+    """
+    raw = raw.strip()
+    if ":" not in raw:
+        return None, raw
+
+    left, right = raw.split(":", 1)
+    left = left.strip().strip("#").strip()
+    right = right.strip()
+
+    # คีย์เวิร์ดต้องเป็นคำเดียว (ไม่มีช่องว่าง) ไม่ยาวเกินกำหนด และมีเนื้อหาโน้ตไม่ว่าง
+    if not left or not right:
+        return None, raw
+    if re.search(r"\s", left):
+        return None, raw
+    if len(left) > KEYWORD_MAX_LEN:
+        return None, raw
+
+    return left, right
+
+
+def parse_keyword_recall(text: str) -> dict | None:
+    """Parse คำสั่งเรียกดูโน้ตด้วยคีย์เวิร์ด เช่น 'ดู wifi', '#wifi', หรือพิมพ์คีย์เวิร์ดตรงๆ
+    คืนค่า dict {'keyword': str, 'explicit': bool} หรือ None หากไม่ใช่
+    - explicit=True หมายถึงผู้ใช้ระบุคำสั่งชัดเจน (ดู/หา/ค้น/#) → ถ้าไม่พบให้แจ้งเตือน
+    - explicit=False หมายถึงพิมพ์คีย์เวิร์ดเปล่าๆ → ถ้าไม่พบให้ส่งต่อไป parse ปกติ
+    """
+    t = text.strip()
+    if not t:
+        return None
+
+    lower = t.lower()
+    keyword = None
+    explicit = False
+
+    for prefix in KEYWORD_RECALL_PREFIXES:
+        if lower.startswith(prefix):
+            keyword = t[len(prefix):].strip()
+            explicit = True
+            break
+
+    # พิมพ์แค่คำสั่ง "ดู"/"หา"/"ค้น" เฉยๆ โดยไม่มีคีย์เวิร์ด → ไม่ใช่คำสั่งที่สมบูรณ์
+    if keyword is None and lower in {"ดู", "หา", "ค้น"}:
+        return None
+
+    if keyword is None and t.startswith("#"):
+        keyword = t[1:].strip()
+        explicit = True
+
+    if keyword is None:
+        # พิมพ์คีย์เวิร์ดตรงๆ (bare keyword) — ยกเว้นรหัส habit 2 หลัก (00–99)
+        if re.fullmatch(r"\d{2}", t):
+            return None
+        keyword = t
+        explicit = False
+
+    keyword = keyword.strip().strip("#").strip()
+    if not keyword:
+        return None
+    if len(keyword) > KEYWORD_MAX_LEN:
+        return None
+
+    return {"keyword": keyword.lower(), "explicit": explicit}
 
 
 def parse_infographic_command(text: str) -> dict | None:
@@ -639,9 +723,11 @@ async def process_message(
             custom_icons=custom_icons
         )
 
-    # Free note (Text)
+    # Free note (Text) — รองรับการบันทึกโน้ตพร้อมคีย์เวิร์ด: ***keyword: เนื้อหา
     if text.startswith("***"):
-        note = text[3:].strip()
+        raw_note = text[3:].strip()
+        keyword, note = split_keyword_note(raw_note)
+
         # ค้นหาและสกัดปี ค.ศ. (4 หลัก เช่น 1990-2099) เพื่อใช้บันทึกโน้ตย้อนหลัง
         year_match = re.search(r"\b(19\d{2}|20\d{2})\b", note)
         note_date = today
@@ -669,11 +755,32 @@ async def process_message(
             category="note",
             done=True,
             note=note,
+            keyword=keyword,
         )
 
         db.add(entry)
         await db.commit()
-        return f"📝 {note} (ปี {note_date.year})" if note_date.year != today.year else f"📝 {note}"
+
+        suffix = f" (ปี {note_date.year})" if note_date.year != today.year else ""
+        if keyword:
+            return f"📝 [#{keyword}] {note}{suffix}"
+        return f"📝 {note}{suffix}"
+
+    # Keyword Recall (เรียกดูโน้ตด้วยคีย์เวิร์ดที่เคยบันทึกไว้)
+    recall = parse_keyword_recall(text)
+    if recall is not None:
+        notes = await get_notes_by_keyword(db, user_id, recall["keyword"])
+        if notes:
+            from flex.flex_builders import build_note_summary_flex
+            return build_note_summary_flex(
+                f"🔎 ค้นหา: {recall['keyword']}",
+                notes,
+                command_map,
+                custom_icons,
+            )
+        if recall["explicit"]:
+            return f'🔎 ไม่พบโน้ตสำหรับคีย์เวิร์ด "{recall["keyword"]}"'
+        # bare keyword ไม่พบ → ตกไปสู่การ parse ปกติ (habit/invalid)
 
     # Habit toggle (Flex Confirmation)
     parsed = parse_message(text, command_map)
