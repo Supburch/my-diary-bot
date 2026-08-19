@@ -120,11 +120,13 @@ async def get_notes_by_keyword(
     user_id: str,
     keyword: str,
 ) -> list:
-    """ดึงโน้ตทั้งหมดที่บันทึกด้วยคีย์เวิร์ดที่ระบุ (ไม่สนใจตัวพิมพ์เล็ก/ใหญ่)"""
+    """ดึงโน้ตทั้งหมดที่ตรงกับคำ/คีย์เวิร์ดที่ระบุ (ค้นจากเนื้อหาโน้ต ไม่สนใจตัวพิมพ์เล็ก/ใหญ่)"""
+    kw = keyword.lower()
+    pattern = f"%{kw}%"
     stmt = select(DiaryEntry).where(
         DiaryEntry.user_id == user_id,
-        DiaryEntry.keyword.isnot(None),
-        func.lower(DiaryEntry.keyword) == keyword.lower(),
+        DiaryEntry.code.like("~~%"),
+        func.lower(DiaryEntry.note).like(pattern),
     ).order_by(DiaryEntry.entry_date.desc())
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -361,29 +363,6 @@ def parse_note_summary_command(text: str) -> dict | None:
         return {"period_type": "year", "value": int(year_match.group(1))}
 
     return None
-
-
-def split_keyword_note(raw: str) -> tuple[str | None, str]:
-    """แยกคีย์เวิร์ดออกจากโน้ตเมื่อผู้ใช้พิมพ์ ***keyword: เนื้อหา
-    คืนค่า (keyword, note) หากเป็นรูปแบบคีย์เวิร์ด มิฉะนั้นคืน (None, note เดิม)
-    """
-    raw = raw.strip()
-    if ":" not in raw:
-        return None, raw
-
-    left, right = raw.split(":", 1)
-    left = left.strip().strip("#").strip()
-    right = right.strip()
-
-    # คีย์เวิร์ดต้องเป็นคำเดียว (ไม่มีช่องว่าง) ไม่ยาวเกินกำหนด และมีเนื้อหาโน้ตไม่ว่าง
-    if not left or not right:
-        return None, raw
-    if re.search(r"\s", left):
-        return None, raw
-    if len(left) > KEYWORD_MAX_LEN:
-        return None, raw
-
-    return left, right
 
 
 def parse_keyword_recall(text: str) -> dict | None:
@@ -723,10 +702,9 @@ async def process_message(
             custom_icons=custom_icons
         )
 
-    # Free note (Text) — รองรับการบันทึกโน้ตพร้อมคีย์เวิร์ด: ***keyword: เนื้อหา
+    # Free note (Text) — บันทึกโน้ตอิสระ: ***ข้อความ
     if text.startswith("***"):
-        raw_note = text[3:].strip()
-        keyword, note = split_keyword_note(raw_note)
+        note = text[3:].strip()
 
         # ค้นหาและสกัดปี ค.ศ. (4 หลัก เช่น 1990-2099) เพื่อใช้บันทึกโน้ตย้อนหลัง
         year_match = re.search(r"\b(19\d{2}|20\d{2})\b", note)
@@ -755,18 +733,15 @@ async def process_message(
             category="note",
             done=True,
             note=note,
-            keyword=keyword,
         )
 
         db.add(entry)
         await db.commit()
 
         suffix = f" (ปี {note_date.year})" if note_date.year != today.year else ""
-        if keyword:
-            return f"📝 [#{keyword}] {note}{suffix}"
         return f"📝 {note}{suffix}"
 
-    # Keyword Recall (เรียกดูโน้ตด้วยคีย์เวิร์ดที่เคยบันทึกไว้)
+    # Keyword Recall (เรียกดูโน้ตด้วยคำ/คีย์เวิร์ดที่อยู่ในเนื้อหาโน้ต)
     recall = parse_keyword_recall(text)
     if recall is not None:
         notes = await get_notes_by_keyword(db, user_id, recall["keyword"])

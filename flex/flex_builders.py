@@ -1246,6 +1246,7 @@ def build_guide_flex(command_map: dict[str, str], custom_icons: dict = None) -> 
                 bullet("บันทึกโน้ต", "*** ข้อความ"),
                 bullet("เช่น: *** วันนี้ประชุมเสร็จลุล่วงดี"),
                 bullet("ระบุปีย้อนหลัง", "*** ทริปญี่ปุ่น 2024"),
+                bullet("เรียกดูโน้ตด้วยคำในโน้ต", "wifi / ดู wifi / #wifi"),
             ]
         },
         separator(),

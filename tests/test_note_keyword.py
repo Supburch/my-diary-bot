@@ -1,4 +1,4 @@
-"""Unit Tests สำหรับฟีเจอร์โน้ตด้วยคีย์เวิร์ด (บันทึก + เรียกกลับดู)"""
+"""Unit Tests สำหรับฟีเจอร์เรียกดูโน้ตด้วยคำ/คีย์เวิร์ดที่อยู่ในเนื้อหาโน้ต"""
 import pytest
 from datetime import date
 
@@ -6,36 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from db.models import Base, DiaryEntry
 from services.diary_service import (
-    split_keyword_note,
     parse_keyword_recall,
     get_notes_by_keyword,
 )
-
-
-class TestSplitKeywordNote:
-    """ทดสอบการแยกคีย์เวิร์ดออกจากโน้ต (***keyword: เนื้อหา)"""
-
-    def test_keyword_with_colon(self):
-        assert split_keyword_note("wifi: รหัส 1234") == ("wifi", "รหัส 1234")
-
-    def test_keyword_no_space_after_colon(self):
-        assert split_keyword_note("wifi:รหัส") == ("wifi", "รหัส")
-
-    def test_no_colon_is_normal_note(self):
-        assert split_keyword_note("บันทึกทั่วไป") == (None, "บันทึกทั่วไป")
-
-    def test_colon_with_space_in_keyword_is_normal(self):
-        # "เวลา 15:30" ไม่ควรเป็นคีย์เวิร์ด (คีย์เวิร์ดต้องเป็นคำเดียว)
-        assert split_keyword_note("เวลา 15:30 นัดหมอ") == (None, "เวลา 15:30 นัดหมอ")
-
-    def test_empty_keyword_is_normal(self):
-        assert split_keyword_note(": เนื้อหา") == (None, ": เนื้อหา")
-
-    def test_empty_content_is_normal(self):
-        assert split_keyword_note("wifi:") == (None, "wifi:")
-
-    def test_keyword_strips_hash(self):
-        assert split_keyword_note("#wifi: รหัส") == ("wifi", "รหัส")
 
 
 class TestParseKeywordRecall:
@@ -86,10 +59,10 @@ async def db_session():
 async def test_get_notes_by_keyword(db_session):
     today = date(2026, 6, 1)
     db_session.add_all([
-        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~a", category="note", done=True, note="รหัส wifi", keyword="wifi"),
-        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~b", category="note", done=True, note="รหัส wifi สำรอง", keyword="wifi"),
-        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~c", category="note", done=True, note="รหัสบ้าน", keyword="บ้าน"),
-        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~d", category="note", done=True, note="โน้ตไม่มีคีย์เวิร์ด", keyword=None),
+        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~a", category="note", done=True, note="รหัส wifi"),
+        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~b", category="note", done=True, note="รหัส wifi สำรอง"),
+        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~c", category="note", done=True, note="รหัสบ้าน"),
+        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~d", category="note", done=True, note="โน้ตธรรมดา"),
     ])
     await db_session.commit()
 
@@ -105,5 +78,29 @@ async def test_get_notes_by_keyword(db_session):
     assert home_notes[0].note == "รหัสบ้าน"
 
     # no match
+    none_notes = await get_notes_by_keyword(db_session, "U_TEST", "ไม่พบ")
+    assert len(none_notes) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_notes_by_keyword_searches_note_content(db_session):
+    """ค้นหาโน้ตด้วยคำที่อยู่ในเนื้อหาโน้ต (case-insensitive substring)"""
+    today = date(2026, 6, 1)
+    db_session.add_all([
+        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~a", category="note", done=True, note="รหัส wifi อยู่หลังเราเตอร์"),
+        DiaryEntry(user_id="U_TEST", entry_date=today, code="~~b", category="note", done=True, note="ที่จอดรถชั้น B2"),
+    ])
+    await db_session.commit()
+
+    # เจอจากเนื้อหาโน้ตโดยตรง
+    wifi_notes = await get_notes_by_keyword(db_session, "U_TEST", "wifi")
+    assert len(wifi_notes) == 1
+    assert wifi_notes[0].note == "รหัส wifi อยู่หลังเราเตอร์"
+
+    # case-insensitive
+    wifi_upper = await get_notes_by_keyword(db_session, "U_TEST", "WIFI")
+    assert len(wifi_upper) == 1
+
+    # ไม่พบ
     none_notes = await get_notes_by_keyword(db_session, "U_TEST", "ไม่พบ")
     assert len(none_notes) == 0

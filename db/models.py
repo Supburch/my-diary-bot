@@ -17,7 +17,6 @@ class DiaryEntry(Base):
     done: Mapped[bool] = mapped_column(Boolean, default=True)
     count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    keyword: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
 
 class UserHabit(Base):
