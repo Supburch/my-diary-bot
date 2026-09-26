@@ -22,6 +22,12 @@ services:
         value: "22"
       - key: REMINDER_ENABLED
         value: "true"
+      # ป้องกัน Render Free Tier spin-down (บอตเงียบช่วง idle)
+      # ใส่ URL ของ service เอง เช่น https://diarybot.onrender.com
+      - key: KEEP_ALIVE_URL
+        sync: false
+      - key: KEEP_ALIVE_INTERVAL
+        value: "720"
       - key: WEBHOOK_CONCURRENCY
         value: "20"
       - key: POOL_SIZE
