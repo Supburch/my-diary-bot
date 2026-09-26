@@ -4,6 +4,7 @@ from db.models import UserHabit
 
 DEFAULT_COMMAND_MAP: dict[str, str] = {
     "00": "News/Talk",
+    "01": "Up Skill",
     "11": "5min Read",
     "22": "Documentary",
     "33": "PU @ 10",

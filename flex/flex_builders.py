@@ -20,7 +20,7 @@ def get_quick_reply_habits(
     """เรียงลำดับความสำคัญและคัดเลือก Habit ที่เหมาะสมเพื่อนำไปสร้าง Quick Reply (Cap สูงสุดไม่เกิน LINE Limit 13)"""
     # จัดลำดับความสำคัญแบบ Context-Aware:
     # 99, 77, 66, 33, 11, 44, 55 เป็นกลุ่มยอดนิยม/ใช้บ่อย ควรจะอยู่ซ้ายสุดเพื่อให้กดง่าย
-    priority_order = ["99", "77", "66", "33", "11", "44", "55", "22", "88", "00"]
+    priority_order = ["99", "01", "77", "66", "33", "11", "44", "55", "22", "88", "00"]
     
     # ดึงเฉพาะรหัสที่มีอยู่ใน user's command_map
     available_codes = [c for c in priority_order if c in command_map]
@@ -100,6 +100,7 @@ def build_quick_reply(context: QuickReplyContext, command_map: dict[str, str], c
 # ไอคอน Emojis สวยๆ ประจำรหัส Habit
 HABIT_ICONS = {
     "00": "💬",
+    "01": "🎓",
     "11": "📖",
     "22": "🎥",
     "33": "💪",
